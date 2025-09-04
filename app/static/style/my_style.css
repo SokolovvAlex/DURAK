@@ -1,0 +1,260 @@
+/* Variables */
+:root {
+    --primary-color: #776e65;
+    --secondary-color: #bbada0;
+    --accent-color: #f2b179;
+    --background-light: #eee4da;
+    --background-dark: #8f7a66;
+    --text-light: #ffffff;
+    --text-dark: #776e65;
+    --border-radius: 8px;
+    --spacing-xs: 4px;
+    --spacing-sm: 8px;
+    --spacing-md: 16px;
+    --spacing-lg: 24px;
+    --transition: all 0.2s ease-in-out;
+}
+
+/* Layout & Typography */
+.heading {
+    padding: var(--spacing-sm) 0;
+    text-align: center;
+}
+
+.title {
+    font-size: clamp(1.25rem, 3vw, 2rem);
+    font-weight: 700;
+    color: var(--text-dark);
+    margin-bottom: var(--spacing-sm);
+}
+
+/* Game Controls */
+.game-controls {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-sm);
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+/* Container for all buttons */
+/* Icon button group */
+.button-group {
+    display: flex;
+    justify-content: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-sm);
+}
+
+/* Icon button base styles */
+.icon-btn {
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background-color: var(--background-light);
+    color: var(--text-dark);
+    cursor: pointer;
+    transition: var(--transition);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Specific button styles */
+.play-btn {
+    background-color: var(--accent-color);
+    color: var(--text-light);
+}
+
+.reset-btn {
+    background-color: #dc3545;
+    color: var(--text-light);
+}
+
+.exit-btn {
+    background-color: var(--background-dark);
+    color: var(--text-light);
+}
+
+/* Hover effects */
+.icon-btn:hover {
+    filter: brightness(110%);
+    transform: translateY(-2px);
+}
+
+/* Active state */
+.icon-btn:active {
+    transform: translateY(0);
+}
+
+/* Top row with Score and Reset buttons */
+.top-buttons {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+}
+
+/* Make top buttons equal width */
+.top-buttons .score-btn {
+    flex: 1;
+}
+
+/* Common button styles */
+.score-btn,
+.exit-btn {
+    height: 36px;
+    padding: 0 var(--spacing-md);
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-light);
+    border: none;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    transition: var(--transition);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Score button styles */
+.score-btn {
+    background-color: var(--accent-color);
+}
+
+.score-btn:hover {
+    filter: brightness(110%);
+}
+
+/* Reset button styles */
+.score-btn.reset-btn {
+    background-color: #dc3545;
+}
+
+/* Exit button styles */
+.exit-btn {
+    background-color: var(--background-dark);
+    width: 200px; /* Фиксированная ширина для кнопки выйти */
+}
+
+.exit-btn:hover {
+    filter: brightness(110%);
+}
+
+/* Arrow Controls - Оставляем без изменений */
+.arrow-row {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin: var(--spacing-xs) 0;
+}
+
+.arrow-btn {
+    width: 48px;
+    height: 48px;
+    font-size: 1.25rem;
+    border: 2px solid var(--secondary-color);
+    border-radius: var(--border-radius);
+    background-color: var(--background-light);
+    color: var(--text-dark);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.arrow-btn:hover {
+    background-color: var(--accent-color);
+    color: var(--text-light);
+}
+
+/* Score Table */
+.score-table {
+    width: 100%;
+    max-width: 800px;
+    margin: var(--spacing-lg) auto;
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--background-light);
+}
+
+th {
+    padding: var(--spacing-md);
+    background-color: var(--accent-color);
+    color: var(--text-light);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+td {
+    padding: var(--spacing-md);
+    color: var(--text-dark);
+    border: 1px solid var(--secondary-color);
+    text-align: center;
+}
+
+/* Place Styles */
+.first-place {
+    background-color: #ffd700;
+    color: var(--text-dark);
+    font-weight: 700;
+    font-size: 1.1rem;
+}
+
+.second-place {
+    background-color: #c0c0c0;
+    color: var(--text-dark);
+    font-weight: 600;
+}
+
+.third-place {
+    background-color: #cd7f32;
+    color: var(--text-light);
+    font-weight: 600;
+}
+
+.rank-icon {
+    font-size: 1.2em;
+    margin-right: var(--spacing-sm);
+    vertical-align: middle;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .score-table {
+        width: 95%;
+        margin: var(--spacing-md) auto;
+    }
+
+    th, td {
+        padding: var(--spacing-sm);
+        font-size: 0.9rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .button-group {
+        flex-wrap: wrap;
+        height: auto;
+    }
+
+    .score-btn,
+    .exit-btn {
+        width: 100%;
+    }
+
+    th, td {
+        padding: var(--spacing-xs);
+        font-size: 0.8rem;
+    }
+}

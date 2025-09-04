@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}Играть в 2048{% endblock %}
+
+{% block content %}
+<div class="heading">
+    <h1 class="title">2048</h1>
+    <div class="scores-container">
+        <div class="score-container">0</div>
+        <div class="best-container">0</div>
+    </div>
+</div>
+
+<div class="above-game">
+    <p class="game-intro">Соединяй числа и доберись до <strong>плитки 2048!</strong></p>
+    <a class="restart-button">Новая игра</a>
+</div>
+
+<div class="game-container">
+    <div class="game-message">
+        <p></p>
+        <div class="lower">
+            <a class="keep-playing-button">Продолжить</a>
+            <a class="retry-button">Попробовать снова</a>
+        </div>
+    </div>
+
+    <div class="grid-container">
+        <div class="grid-row">
+            <div class="grid-cell"></div>
+            <div class="grid-cell"></div>
+            <div class="grid-cell"></div>
+            <div class="grid-cell"></div>
+        </div>
+        <div class="grid-row">
+            <div class="grid-cell"></div>
+            <div class="grid-cell"></div>
+            <div class="grid-cell"></div>
+            <div class="grid-cell"></div>
+        </div>
+        <div class="grid-row">
+            <div class="grid-cell"></div>
+            <div class="grid-cell"></div>
+            <div class="grid-cell"></div>
+            <div class="grid-cell"></div>
+        </div>
+        <div class="grid-row">
+            <div class="grid-cell"></div>
+            <div class="grid-cell"></div>
+            <div class="grid-cell"></div>
+            <div class="grid-cell"></div>
+        </div>
+    </div>
+
+    <div class="tile-container">
+
+    </div>
+</div>
+
+<div class="game-controls">
+    <div class="arrow-row">
+        <button class="arrow-btn up-btn">↑</button>
+    </div>
+    <div class="arrow-row">
+        <button class="arrow-btn left-btn">←</button>
+        <button class="arrow-btn down-btn">↓</button>
+        <button class="arrow-btn right-btn">→</button>
+    </div>
+    <div class="button-group">
+        <button class="icon-btn records-btn" onclick="window.location.href='/records'">
+            <!-- Trophy Icon -->
+            <svg width="24" height="24" viewBox="0 0 24 24">
+                <path d="M17 3H7c0-1.1-.9-2-2-2H3c-1.1 0-2 .9-2 2v2c0 2.76 2.24 5 5 5h.18C6.07 11.19 6 11.58 6 12c0 3.31 2.69 6 6 6s6-2.69 6-6c0-.42-.07-.81-.18-1.18H19c2.76 0 5-2.24 5-5V3c0-1.1-.9-2-2-2h-2c-1.1 0-2 .9-2 2zM5 7c-1.65 0-3-1.35-3-3V3h2v4h1zm14-4h2v1c0 1.65-1.35 3-3 3V3zM12 18c-2.67 0-5.33 1.34-6 4h12c-.67-2.66-3.33-4-6-4z"
+                      fill="currentColor"></path>
+            </svg>
+        </button>
+        <button class="icon-btn reset-btn" id="clearStorageButton">
+            <!-- Reset Icon -->
+            <svg width="24" height="24" viewBox="0 0 24 24">
+                <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 .34-.03.67-.08 1H18c0-3.31-2.69-6-6-6zM6 13c0 3.31 2.69 6 6 6v3l4-4-4-4v3c-2.76 0-5-2.24-5-5H6c0 .34.03.67.08 1H6c-.05-.33-.08-.66-.08-1z"
+                      fill="currentColor"></path>
+            </svg>
+        </button>
+        <button class="icon-btn exit-btn" onclick="window.Telegram.WebApp.close()">
+            <!-- Exit Icon -->
+            <svg width="24" height="24" viewBox="0 0 24 24">
+                <path d="M16 13v-2H7V9l-5 4 5 4v-3h9zM19 3H5c-1.1 0-2 .9-2 2v4h2V5h14v14H5v-4H3v4c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"
+                      fill="currentColor"></path>
+            </svg>
+        </button>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/bind_polyfill.js?v=1.0.1"></script>
+<script src="/static/js/classlist_polyfill.js?v=1.0.1"></script>
+<script src="/static/js/animframe_polyfill.js?v=1.0.1"></script>
+<script src="/static/js/keyboard_input_manager.js?v=1.0.1"></script>
+<script src="/static/js/html_actuator.js?v=1.0.1"></script>
+<script src="/static/js/grid.js?v=1.0.1"></script>
+<script src="/static/js/tile.js?v=1.0.1"></script>
+<script src="/static/js/local_storage_manager.js?v=1.1.4"></script>
+<script src="/static/js/game_manager.js?v=1.0.2"></script>
+<script src="/static/js/application.js?v=1.0.3"></script>
+<script src="/static/js/scan.js?v=1.0.1"></script>
+{% endblock %}
