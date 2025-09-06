@@ -13,8 +13,7 @@ from app.users.dao import UserDAO
 from app.config import settings
 
 
-@connection()
-async def get_current_user(tg_id: int, session):
+async def get_current_user(tg_id: int, session: SessionDep):
     user = await UserDAO.find_one_or_none(session, tg_id=tg_id)
     return user
 

@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     DB_URL: str = 'sqlite+aiosqlite:///data/db.sqlite3'
     BASE_SITE: str
 
+    PLAT_SECRET_KEY: str
+    PLAT_SHOP_ID: str
+
     model_config = SettingsConfigDict(
         env_file=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
     )
