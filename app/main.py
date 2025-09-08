@@ -50,8 +50,6 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-app.mount('/static', StaticFiles(directory='app/static'), 'static')
-
 
 @app.post("/webhook")
 async def webhook(request: Request) -> None:
