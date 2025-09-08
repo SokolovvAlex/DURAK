@@ -1,5 +1,7 @@
 import os
 from typing import List
+
+from loguru import logger
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,21 +10,46 @@ class Settings(BaseSettings):
     ADMIN_IDS: List[int]
     FORMAT_LOG: str = "{time:YYYY-MM-DD at HH:mm:ss} | {level} | {message}"
     LOG_ROTATION: str = "10 MB"
-    DB_URL: str = 'sqlite+aiosqlite:///data/db.sqlite3'
-    BASE_SITE: str
+    DB_URL: str = "sqlite+aiosqlite:///data/db.sqlite3"
+    DB_PATH: str = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "data", "db.sqlite3"
+    )
+    BASE_URL: str
+
+    REDIS_PORT: int
+    REDIS_PASSWORD: str
+    REDIS_HOST: str
+    FRONT_URL: str
+
+    SECRET_KEY: str
+
+    CENTRIFUGO_API_KEY: str
+    CENTRIFUGO_URL: str
+    SOCKET_URL: str
+    REDIS_SSL: bool
 
     PLAT_SECRET_KEY: str
-    PLAT_SHOP_ID: str
+    PLAT_SHOP_ID: int
+
+    @property
+    def hook_url(self) -> str:
+        """Возвращает URL вебхука"""
+        return f"{self.BASE_URL}/webhook"
 
     model_config = SettingsConfigDict(
         env_file=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
     )
 
-    def get_webhook_url(self) -> str:
-        """Возвращает URL вебхука с кодированием специальных символов."""
-        return f"{self.BASE_SITE}/webhook"
-
 
 # Получаем параметры для загрузки переменных среды
 settings = Settings()
+
+log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "log.txt")
+logger.add(
+    log_file_path,
+    format=settings.FORMAT_LOG,
+    level="INFO",
+    rotation=settings.LOG_ROTATION,
+)
+
 database_url = settings.DB_URL

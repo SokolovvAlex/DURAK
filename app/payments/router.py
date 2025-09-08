@@ -1,51 +1,52 @@
-# from fastapi import APIRouter, Depends
-#
-# from app.database import SessionDep
-# from app.payments.models import TxTypeEnum
-# from app.users.auth import get_current_user
-# from app.users.models import User
-#
-# router = APIRouter(prefix="/payments", tags=["Payments"])
-#
-# @router.post("/paycash")
-# async def paycash(req: DepositRequest, session: SessionDep, current_user: User = Depends(get_current_user)):
-#     # 1. создаём транзакцию
-#     tx = await PaymentTransactionDAO.add(
-#         session,
-#         user_id=current_user.id,
-#         type=TxTypeEnum.DEPOSIT,
-#         amount=req.amount,
-#         status=TxStatusEnum.PENDING,
-#     )
-#
-#     # 2. зовём PLAT API
-#     plat = PlatClient(api_key=settings.PLAT_KEY)
-#     ext_id, pay_url = await plat.create_payment(amount=req.amount, tx_id=tx.id)
-#
-#     # 3. обновляем транзакцию
-#     await PaymentTransactionDAO.update(session, {"id": tx.id}, ext_ref=ext_id)
-#
-#     return {"tx_id": tx.id, "pay_url": pay_url}
-#
-# @router.post("/pullcash")
-# async def pullcash(req: WithdrawRequest, session: SessionDep, current_user: User = Depends(get_current_user)):
-#     if current_user.balance < req.amount:
-#         raise HTTPException(status_code=400, detail="Недостаточно средств")
-#
-#     # 1. создаём транзакцию
-#     tx = await PaymentTransactionDAO.add(
-#         session,
-#         user_id=current_user.id,
-#         type=TxTypeEnum.WITHDRAW,
-#         amount=req.amount,
-#         status=TxStatusEnum.PENDING,
-#     )
-#
-#     # 2. зовём PLAT API
-#     plat = PlatClient(api_key=settings.PLAT_KEY)
-#     ext_id = await plat.create_payout(amount=req.amount, tx_id=tx.id, user=current_user)
-#
-#     # 3. сохраняем внешний id
-#     await PaymentTransactionDAO.update(session, {"id": tx.id}, ext_ref=ext_id)
-#
-#     return {"tx_id": tx.id, "status": "pending"}
+from fastapi import APIRouter, Depends, HTTPException, Request
+from app.users.auth import get_current_user
+from app.users.models import User
+from app.config import settings
+from app.payments.utils.plat_client import PlatClient
+
+router = APIRouter(prefix="/payments", tags=["Payments"])
+
+
+def get_plat_client() -> PlatClient:
+    return PlatClient(
+        shop_id=settings.PLAT_SHOP_ID,
+        secret_key=settings.PLAT_SECRET_KEY,
+    )
+
+
+# ---- 1. Создание платежа ----
+@router.post("/paycash")
+async def paycash(
+    amount: int,
+    current_user: User = Depends(get_current_user),
+):
+    plat = get_plat_client()
+    # ⚠️ amount: проверить — в копейках или рублях (100₽ = 10000 ?)
+    guid, pay_url, payment_data = await plat.create_payment(
+        merchant_order_id="ORDER123",  # тут обычно id транзакции из БД
+        user_id=current_user.id,
+        amount=amount,
+        method="card",
+    )
+
+    return {"guid": guid, "pay_url": pay_url, "payment": payment_data}
+
+
+# ---- 2. Callback от PLAT ----
+@router.post("/callback")
+async def plat_callback(request: Request):
+    data = await request.json()
+
+    plat = get_plat_client()
+    if not plat.verify_callback(data):
+        raise HTTPException(status_code=403, detail="Invalid signature")
+
+    status = data.get("status")
+    merchant_order_id = data.get("merchant_order_id")  # если передают обратно
+    amount = data.get("amount")
+
+    # 👉 тут ты обновляешь транзакцию в БД
+    # if status == 1: # success
+    #     update_transaction(merchant_order_id, posted=True)
+
+    return {"ok": True}
