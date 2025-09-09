@@ -193,3 +193,74 @@
 2025-09-08 at 21:59:31 | SUCCESS | Вебхук установлен: https://bursting-smart-eagle.ngrok-free.app/webhook
 2025-09-08 at 23:26:06 | INFO | Бот остановлен...
 2025-09-08 at 23:26:06 | INFO | Redis соединение закрыто
+2025-09-09 at 18:14:25 | INFO | Бот запущен...
+2025-09-09 at 18:14:25 | INFO | Redis подключен успешно
+2025-09-09 at 18:14:37 | SUCCESS | Вебхук установлен: https://bursting-smart-eagle.ngrok-free.app/webhook
+2025-09-09 at 18:17:15 | INFO | [MOVE] 7022782558 -> ['8', '♥'], target=None, room=10_e11cb7f3
+2025-09-09 at 18:45:13 | INFO | Бот остановлен...
+2025-09-09 at 18:45:13 | INFO | Redis соединение закрыто
+2025-09-09 at 18:45:26 | INFO | Бот запущен...
+2025-09-09 at 18:45:26 | INFO | Redis подключен успешно
+2025-09-09 at 18:45:27 | SUCCESS | Вебхук установлен: https://bursting-smart-eagle.ngrok-free.app/webhook
+2025-09-09 at 18:46:21 | INFO | [MOVE] tg_id=7022782558, card=['6', '♥'], target=None
+2025-09-09 at 18:47:00 | INFO | [MOVE] tg_id=7022782558, card=['8', '♥'], target=None
+2025-09-09 at 18:47:09 | INFO | [MOVE] tg_id=7022782558, card=['8', '♥'], target=None
+2025-09-09 at 18:47:29 | INFO | [MOVE] tg_id=7022782558, card=['9', '♥'], target=None
+2025-09-09 at 18:47:37 | INFO | [MOVE] tg_id=7022782558, card=['8', '♥'], target=None
+2025-09-09 at 18:54:53 | INFO | Бот остановлен...
+2025-09-09 at 18:54:53 | INFO | Redis соединение закрыто
+2025-09-09 at 18:54:59 | INFO | Бот запущен...
+2025-09-09 at 18:54:59 | INFO | Redis подключен успешно
+2025-09-09 at 18:55:00 | SUCCESS | Вебхук установлен: https://bursting-smart-eagle.ngrok-free.app/webhook
+2025-09-09 at 18:55:13 | INFO | Бот запущен...
+2025-09-09 at 18:55:14 | INFO | Redis подключен успешно
+2025-09-09 at 18:55:14 | SUCCESS | Вебхук установлен: https://bursting-smart-eagle.ngrok-free.app/webhook
+2025-09-09 at 18:55:19 | INFO | [MOVE] tg_id=7022782558, card=['8', '♥'], target=None
+2025-09-09 at 18:55:20 | INFO | [Centrifugo] -> channel=room#10_e11cb7f3, event=move, status=True
+2025-09-09 at 18:56:36 | INFO | [MOVE] tg_id=5254325840, card=['8', '♥'], target=['9', '♥']
+2025-09-09 at 19:09:15 | INFO | Бот остановлен...
+2025-09-09 at 19:09:15 | INFO | Redis соединение закрыто
+2025-09-09 at 19:09:27 | INFO | Бот запущен...
+2025-09-09 at 19:09:27 | INFO | Redis подключен успешно
+2025-09-09 at 19:09:28 | SUCCESS | Вебхук установлен: https://bursting-smart-eagle.ngrok-free.app/webhook
+2025-09-09 at 19:10:24 | INFO | Создана новая комната 10_0605ee58 пользователем 5254325840
+2025-09-09 at 19:10:46 | INFO | Игрок 7022782558 присоединился к комнате 10_0605ee58
+2025-09-09 at 19:11:15 | INFO | [READY] tg_id=5254325840, room_id=10_0605ee58
+2025-09-09 at 19:11:29 | INFO | [READY] tg_id=7022782558, room_id=10_0605ee58
+2025-09-09 at 19:11:29 | INFO | [READY] Все игроки готовы, стартуем!
+2025-09-09 at 19:11:29 | INFO | [READY] Козырь: ♥, осталось карт: 24
+2025-09-09 at 19:11:30 | INFO | [Centrifugo] -> channel=user#5254325840, event=hand, status=True
+2025-09-09 at 19:11:30 | INFO | [Centrifugo] -> channel=user#7022782558, event=hand, status=True
+2025-09-09 at 19:11:31 | INFO | [Centrifugo] -> channel=room#10_0605ee58, event=game_start, status=True
+2025-09-09 at 19:12:42 | INFO | [MOVE] tg_id=5254325840, card=['6', '♦'], target=None
+2025-09-09 at 19:12:50 | INFO | [MOVE] tg_id=5254325840, card=['6', '♦'], target=None
+2025-09-09 at 19:13:38 | INFO | Бот остановлен...
+2025-09-09 at 19:13:38 | INFO | Redis соединение закрыто
+2025-09-09 at 19:13:50 | INFO | Бот запущен...
+2025-09-09 at 19:13:50 | INFO | Redis подключен успешно
+2025-09-09 at 19:13:50 | SUCCESS | Вебхук установлен: https://bursting-smart-eagle.ngrok-free.app/webhook
+2025-09-09 at 19:14:12 | INFO | Создана новая комната 10_26f97b69 пользователем 7022782558
+2025-09-09 at 19:14:23 | INFO | Игрок 5254325840 присоединился к комнате 10_26f97b69
+2025-09-09 at 19:14:42 | INFO | [READY] tg_id=7022782558, room_id=10_26f97b69
+2025-09-09 at 19:14:51 | INFO | [READY] tg_id=5254325840, room_id=10_26f97b69
+2025-09-09 at 19:14:51 | INFO | [READY] Все игроки готовы, стартуем!
+2025-09-09 at 19:14:51 | INFO | [READY] Козырь: ♦, осталось карт: 24
+2025-09-09 at 19:14:52 | INFO | [Centrifugo] -> channel=user#7022782558, event=hand, status=True
+2025-09-09 at 19:14:52 | INFO | [Centrifugo] -> channel=user#5254325840, event=hand, status=True
+2025-09-09 at 19:14:52 | INFO | [Centrifugo] -> channel=room#10_26f97b69, event=game_start, status=True
+2025-09-09 at 19:15:37 | INFO | [MOVE] tg_id=5254325840, card=['6', '♦'], target=None
+2025-09-09 at 19:15:53 | INFO | [MOVE] tg_id=7022782558, card=['6', '♦'], target=None
+2025-09-09 at 19:15:54 | INFO | [Centrifugo] -> channel=room#10_26f97b69, event=move, status=True
+2025-09-09 at 19:16:27 | INFO | [MOVE] tg_id=5254325840, card=['6', '♦'], target=['10', '♦']
+2025-09-09 at 19:17:05 | INFO | [MOVE] tg_id=5254325840, card=['10', '♦'], target=['6', '♦']
+2025-09-09 at 19:17:06 | INFO | [Centrifugo] -> channel=room#10_26f97b69, event=move, status=True
+2025-09-09 at 19:33:26 | INFO | [MOVE] tg_id=7022782558, card=['Q', '♦'], target=None
+2025-09-09 at 19:33:26 | INFO | [Centrifugo] -> channel=room#10_26f97b69, event=move, status=True
+2025-09-09 at 19:55:28 | INFO | Бот остановлен...
+2025-09-09 at 19:55:28 | INFO | Redis соединение закрыто
+2025-09-09 at 19:55:44 | INFO | Бот запущен...
+2025-09-09 at 19:55:44 | INFO | Redis подключен успешно
+2025-09-09 at 19:55:47 | SUCCESS | Вебхук установлен: https://bursting-smart-eagle.ngrok-free.app/webhook
+2025-09-09 at 19:57:14 | INFO | [TEST] Создана тестовая комната 10_d2c6f6ab
+2025-09-09 at 20:00:24 | INFO | Бот остановлен...
+2025-09-09 at 20:00:24 | INFO | Redis соединение закрыто

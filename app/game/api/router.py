@@ -7,9 +7,10 @@ import random
 from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
 
-from app.game.api.schemas import FindPartnerResponse, FindPartnerRequest, ReadyResponse, ReadyRequest
+from app.game.api.schemas import FindPartnerResponse, FindPartnerRequest, ReadyResponse, ReadyRequest, MoveRequest
 from app.game.api.utils import send_msg, get_all_rooms
-from app.game.core.constants import CARDS_IN_HAND_MAX, DECK
+from app.game.core.constants import CARDS_IN_HAND_MAX, DECK, NAME_TO_VALUE
+from app.game.core.durak import Durak
 from app.game.redis_dao.custom_redis import CustomRedis
 from app.game.redis_dao.manager import get_redis
 
@@ -128,7 +129,7 @@ async def ready(req: ReadyRequest, redis=Depends(get_redis)):
             "deck": deck,
             "hands": hands,
             "trump": trump,
-            "field": {},
+            "field": [],
             "attacker": list(players.keys())[0],
         })
         await redis.set(req.room_id, json.dumps(room))
@@ -159,6 +160,115 @@ async def ready(req: ReadyRequest, redis=Depends(get_redis)):
     return {"ok": True}
 
 
+@router.post("/move")
+async def move(req: MoveRequest, redis: CustomRedis = Depends(get_redis)):
+    """
+    Обработка хода игрока (атака или защита).
+    - Если target == null → атака.
+    - Если target != null → защита.
+    """
+    logger.info(f"[MOVE] tg_id={req.tg_id}, card={req.card}, target={req.target}")
+
+    raw = await redis.get(req.room_id)
+    if not raw:
+        raise HTTPException(status_code=404, detail="Комната не найдена")
+
+    room = json.loads(raw)
+    hands = room.get("hands", {})
+    field = room.get("field", [])
+    trump = room.get("trump")
+    attacker = room.get("attacker")
+
+    # Проверяем игрока
+    if str(req.tg_id) not in hands:
+        raise HTTPException(status_code=404, detail="Игрок не найден в комнате")
+
+    hand = hands[str(req.tg_id)]
+    card = req.card  # ["8", "♥"]
+
+    # --- атака ---
+    if req.target is None:
+        if str(req.tg_id) != attacker:
+            raise HTTPException(status_code=400, detail="Сейчас не твой ход")
+
+        if len(field) >= 6:
+            raise HTTPException(status_code=400, detail="Нельзя подкинуть больше 6 карт")
+
+        if card not in hand:
+            raise HTTPException(status_code=400, detail="У игрока нет такой карты")
+
+        if field:
+            all_values = {f["attack"][0] for f in field} | {
+                f["defend"][0] for f in field if f["defend"] is not None
+            }
+            if card[0] not in all_values:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Можно подкинуть только карту с тем же достоинством, что уже на столе",
+                )
+
+        # добавляем атаку
+        field.append({"attack": card, "defend": None})
+        hand.remove(card)
+
+        logger.debug(f"[MOVE] Игрок {req.tg_id} атаковал {card}")
+
+    # --- защита ---
+    else:
+        target = req.target  # ["9", "♥"]
+
+        # находим атаку, которую надо отбить
+        target_entry = next((f for f in field if f["attack"] == target), None)
+        if not target_entry:
+            raise HTTPException(status_code=400, detail="Такой карты нет на столе для защиты")
+
+        if str(req.tg_id) == attacker:
+            raise HTTPException(status_code=400, detail="Атакующий не может защищаться")
+
+        if target_entry["defend"] is not None:
+            raise HTTPException(status_code=400, detail="Эта карта уже отбита")
+
+        if card not in hand:
+            raise HTTPException(status_code=400, detail="У игрока нет такой карты")
+
+        # проверка на побитие
+        nom1, suit1 = target
+        nom2, suit2 = card
+        beats = False
+        if suit2 == trump and suit1 != trump:
+            beats = True
+        elif suit1 == suit2 and NAME_TO_VALUE[nom2] > NAME_TO_VALUE[nom1]:
+            beats = True
+
+        if not beats:
+            raise HTTPException(status_code=400, detail="Этой картой нельзя побить")
+
+        # применяем защиту
+        target_entry["defend"] = card
+        hand.remove(card)
+
+        logger.debug(f"[MOVE] Игрок {req.tg_id} отбился {card} против {target}")
+
+    # сохраняем
+    hands[str(req.tg_id)] = hand
+    room["hands"] = hands
+    room["field"] = field
+    await redis.set(req.room_id, json.dumps(room))
+
+    # шлём обновление в Centrifugo
+    await send_msg(
+        event="move",
+        payload={
+            "room_id": req.room_id,
+            "field": field,
+            "hands_count": {pid: len(h) for pid, h in hands.items()},
+        },
+        channel_name=f"room#{req.room_id}",
+    )
+
+    return {"ok": True, "field": field, "hands": hands}
+
+
 @router.get("/rooms")
 async def list_rooms(redis: CustomRedis = Depends(get_redis)):
     """Получить список всех комнат."""
@@ -179,6 +289,53 @@ async def clear_redis(redis_client: CustomRedis = Depends(get_redis)):
     await redis_client.flushdb()
     return {"message": "Redis база данных очищена"}
 
+
+@router.post("/create_test_room")
+async def create_test_room(redis: CustomRedis = Depends(get_redis)):
+    """
+    Создаёт тестовую комнату с заранее заданным положением карт.
+    Используется для отладки хода, отбоя и подкидывания.
+    """
+    room_id = f"10_{uuid.uuid4().hex[:8]}"
+    trump = "♦"
+
+    # Жёстко задаём расклад
+    room = {
+        "room_id": room_id,
+        "stake": 10,
+        "created_at": datetime.utcnow().isoformat(),
+        "status": "matched",
+        "players": {
+            "7022782558": {"nickname": "sasha", "is_ready": True},
+            "5254325840": {"nickname": "ed", "is_ready": True},
+        },
+        "deck": [
+            ["A", "♦"], ["6", "♠"], ["9", "♦"], ["K", "♥"],
+            ["6", "♣"], ["10", "♣"], ["Q", "♠"], ["8", "♠"],
+            ["7", "♣"], ["9", "♥"], ["10", "♥"], ["9", "♠"],
+            ["K", "♦"], ["J", "♥"], ["K", "♣"], ["Q", "♣"],
+            ["A", "♥"], ["9", "♣"], ["7", "♦"], ["8", "♦"],
+            ["J", "♦"], ["K", "♠"], ["7", "♥"], ["J", "♣"]
+        ],
+        "hands": {
+            "7022782558": [  # атакующий
+                ["7", "♠"], ["J", "♠"], ["8", "♣"], ["6", "♥"], ["Q", "♦"]
+            ],
+            "5254325840": [  # защищающийся
+                ["A", "♣"], ["Q", "♥"], ["10", "♠"], ["8", "♥"], ["A", "♠"]
+            ],
+        },
+        "trump": trump,
+        "field": [
+            {"attack": ["6", "♦"], "defend": ["10", "♦"]}
+        ],
+        "attacker": "7022782558",  # атакует Саша
+    }
+
+    await redis.set(room_id, json.dumps(room))
+    logger.info(f"[TEST] Создана тестовая комната {room_id}")
+
+    return {"ok": True, "room": room}
 
 #
 #

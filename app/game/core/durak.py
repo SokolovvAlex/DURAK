@@ -121,3 +121,33 @@ class Durak:
         cards = self.attacking_cards + self.defending_cards
         self.opponent_player.add_cards(cards)
         self.field = {}
+
+    def serialized(self):
+        """Вернуть текущее состояние игры в JSON-friendly формате"""
+        return {
+            "deck": self.deck,
+            "trump": self.trump,
+            "field": {str(k): v for k, v in self.field.items()},
+            "attacker_index": self.attacker_index,
+            "winner": self.winner,
+            "players": [
+                {
+                    "index": p.index,
+                    "cards": p.cards,
+                }
+                for p in self.players
+            ],
+        }
+
+    @classmethod
+    def from_serialized(cls, data):
+        """Восстановить игру из JSON"""
+        obj = cls()
+        obj.deck = data["deck"]
+        obj.trump = data["trump"]
+        obj.field = {eval(k): tuple(v) if v else None for k, v in data["field"].items()}
+        obj.attacker_index = data["attacker_index"]
+        obj.winner = data["winner"]
+        for i, pdata in enumerate(data["players"]):
+            obj.players[i].cards = [tuple(c) for c in pdata["cards"]]
+        return obj

@@ -95,3 +95,10 @@ class FinishTurnResponse(BaseModel):
     status: Literal["ok", "error"]
     message: str
     game_state: Optional[GameState]
+    
+
+class MoveRequest(BaseModel):
+    room_id: str
+    tg_id: int
+    card: list[str]   # ["8", "♠"] например
+    target: Optional[list[str]] = None  # если ход защитника — какую карту бьём
