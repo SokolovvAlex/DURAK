@@ -27,11 +27,15 @@ async def lifespan(app: FastAPI):
     logger.info("Бот запущен...")
     await redis_manager.connect()
     await start_bot()
-    webhook_url = settings.hook_url
-    await bot.set_webhook(url=webhook_url,
-                          allowed_updates=dp.resolve_used_update_types(),
-                          drop_pending_updates=True)
-    logger.success(f"Вебхук установлен: {webhook_url}")
+    # webhook_url = settings.hook_url
+    # await bot.set_webhook(url=webhook_url,
+    #                       allowed_updates=dp.resolve_used_update_types(),
+    #                       drop_pending_updates=True)
+    # logger.success(f"Вебхук установлен: {webhook_url}")
+
+    dp.include_router(bot_router)
+    asyncio.create_task(dp.start_polling(bot))
+
     yield
     logger.info("Бот остановлен...")
     await stop_bot()
@@ -68,5 +72,5 @@ app.include_router(payments_router)
 #docker run --name redis -d -p 6379:6379 redis
 #docker run -d -p 8000:8000 --name centrifugo my-centrifugo
 
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=8080, reload=True)
+# if __name__ == "__main__":
+#     uvicorn.run("main:app", host="127.0.0.1", port=8080, reload=True)

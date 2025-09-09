@@ -10,7 +10,16 @@ class Settings(BaseSettings):
     ADMIN_IDS: List[int]
     FORMAT_LOG: str = "{time:YYYY-MM-DD at HH:mm:ss} | {level} | {message}"
     LOG_ROTATION: str = "10 MB"
-    DB_URL: str = "sqlite+aiosqlite:///data/db.sqlite3"
+    # DB_URL: str = "sqlite+aiosqlite:///data/db.sqlite3"
+
+    POSTGRES_DB: str
+    POSTGRES_USER: str
+    POSTGRES_PASSWORD: str
+    POSTGRES_PORT: int
+    POSTGRES_HOST: str
+
+    DB_URL: str = "postgresql+asyncpg://postgres:postgres@postgres:5432/durak"
+
     DB_PATH: str = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "..", "data", "db.sqlite3"
     )

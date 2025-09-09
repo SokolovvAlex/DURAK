@@ -2,7 +2,7 @@ from aiogram import Router, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery
 
-from app.bot.keyboards.kbs import main_keyboard
+# from app.bot.keyboards.kbs import main_keyboard
 from app.database import connection, SessionDep
 from app.users.dao import UserDAO
 from app.users.schemas import TelegramIDModel, UserCreate
@@ -34,4 +34,4 @@ async def cmd_start(message: Message, session: SessionDep, **kwargs):
         )
         user = await UserDAO.add(session, **values.model_dump())
 
-    await message.answer(welcome_text, reply_markup=main_keyboard())
+    await message.answer(welcome_text)

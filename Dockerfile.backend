@@ -1,0 +1,23 @@
+FROM python:3.11-slim
+
+# Устанавливаем зависимости для psycopg2, gcc и других пакетов (если есть Postgres)
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Копируем зависимости
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Копируем проект
+COPY . .
+
+# Указываем порт (например, 8001, чтобы не пересекаться с Centrifugo)
+EXPOSE 8001
+
+# Запускаем Uvicorn
+CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+
