@@ -264,3 +264,46 @@
 2025-09-09 at 19:57:14 | INFO | [TEST] Создана тестовая комната 10_d2c6f6ab
 2025-09-09 at 20:00:24 | INFO | Бот остановлен...
 2025-09-09 at 20:00:24 | INFO | Redis соединение закрыто
+2025-09-09 at 20:00:36 | INFO | Бот запущен...
+2025-09-09 at 20:00:36 | INFO | Redis подключен успешно
+2025-09-09 at 20:00:38 | SUCCESS | Вебхук установлен: https://bursting-smart-eagle.ngrok-free.app/webhook
+2025-09-09 at 20:01:08 | INFO | [TEST] Создана тестовая комната 10_ead1bb7e
+2025-09-09 at 20:02:17 | INFO | [MOVE] tg_id=7022782558, card=['8', '♥'], target=None
+2025-09-09 at 20:02:47 | INFO | [MOVE] tg_id=7022782558, card=['8', '♣'], target=None
+2025-09-09 at 20:02:58 | INFO | [MOVE] tg_id=7022782558, card=['6', '♥'], target=None
+2025-09-09 at 20:02:59 | INFO | [Centrifugo] -> channel=room#10_ead1bb7e, event=move, status=True
+2025-09-09 at 20:03:58 | INFO | [MOVE] tg_id=5254325840, card=['10', '♠'], target=['6', '♥']
+2025-09-09 at 20:04:22 | INFO | [MOVE] tg_id=5254325840, card=['8', '♥'], target=['6', '♥']
+2025-09-09 at 20:04:22 | INFO | [Centrifugo] -> channel=room#10_ead1bb7e, event=move, status=True
+2025-09-09 at 22:39:26 | INFO | Бот остановлен...
+2025-09-09 at 22:39:26 | INFO | Redis соединение закрыто
+2025-09-09 at 23:02:19 | INFO | Бот запущен...
+2025-09-09 at 23:02:19 | INFO | Redis подключен успешно
+2025-09-09 at 23:02:19 | SUCCESS | Вебхук установлен: https://bursting-smart-eagle.ngrok-free.app/webhook
+2025-09-09 at 23:03:21 | INFO | [BITO] room_id=10_ead1bb7e, tg_id=5254325840
+2025-09-09 at 23:03:22 | INFO | [Centrifugo] -> channel=room#10_ead1bb7e, event=bito, status=True
+2025-09-09 at 23:10:06 | INFO | Бот остановлен...
+2025-09-09 at 23:10:06 | INFO | Redis соединение закрыто
+2025-09-09 at 23:10:18 | INFO | Бот запущен...
+2025-09-09 at 23:10:18 | INFO | Redis подключен успешно
+2025-09-09 at 23:10:19 | SUCCESS | Вебхук установлен: https://bursting-smart-eagle.ngrok-free.app/webhook
+2025-09-09 at 23:12:02 | INFO | Бот остановлен...
+2025-09-09 at 23:12:02 | INFO | Redis соединение закрыто
+2025-09-09 at 23:12:14 | INFO | Бот запущен...
+2025-09-09 at 23:12:14 | INFO | Redis подключен успешно
+2025-09-09 at 23:12:15 | SUCCESS | Вебхук установлен: https://bursting-smart-eagle.ngrok-free.app/webhook
+2025-09-09 at 23:12:56 | INFO | [TEST] Создана тестовая комната 10_4ebe0e9e
+2025-09-09 at 23:13:35 | INFO | [BITO] room_id=10_4ebe0e9e, tg_id=5254325840
+2025-09-09 at 23:13:49 | INFO | [BITO] room_id=10_4ebe0e9e, tg_id=7022782558
+2025-09-09 at 23:13:49 | INFO | [Centrifugo] -> channel=room#10_4ebe0e9e, event=bito, status=True
+2025-09-09 at 23:19:31 | INFO | Бот остановлен...
+2025-09-09 at 23:19:31 | INFO | Redis соединение закрыто
+2025-09-09 at 23:19:43 | INFO | Бот запущен...
+2025-09-09 at 23:19:43 | INFO | Redis подключен успешно
+2025-09-09 at 23:19:44 | SUCCESS | Вебхук установлен: https://bursting-smart-eagle.ngrok-free.app/webhook
+2025-09-09 at 23:20:18 | INFO | [TEST] Создана тестовая комната 10_e65753e1
+2025-09-09 at 23:21:48 | INFO | [MOVE] tg_id=7022782558, card=['6', '♥'], target=None
+2025-09-09 at 23:21:49 | INFO | [Centrifugo] -> channel=room#10_e65753e1, event=move, status=True
+2025-09-09 at 23:23:18 | INFO | [BERU] room_id=10_e65753e1, tg_id=7022782558
+2025-09-09 at 23:23:26 | INFO | [BERU] room_id=10_e65753e1, tg_id=5254325840
+2025-09-09 at 23:23:26 | INFO | [Centrifugo] -> channel=room#10_e65753e1, event=beru, status=True

@@ -7,13 +7,14 @@ import random
 from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
 
+from app.database import SessionDep
 from app.game.api.schemas import FindPartnerResponse, FindPartnerRequest, ReadyResponse, ReadyRequest, MoveRequest
 from app.game.api.utils import send_msg, get_all_rooms
 from app.game.core.constants import CARDS_IN_HAND_MAX, DECK, NAME_TO_VALUE
 from app.game.core.durak import Durak
 from app.game.redis_dao.custom_redis import CustomRedis
 from app.game.redis_dao.manager import get_redis
-
+from app.users.dao import UserDAO
 
 router = APIRouter(prefix="/durak", tags=["DURAK"])
 
@@ -336,6 +337,234 @@ async def create_test_room(redis: CustomRedis = Depends(get_redis)):
     logger.info(f"[TEST] Создана тестовая комната {room_id}")
 
     return {"ok": True, "room": room}
+
+
+@router.post("/bito")
+async def bito(
+    req: ReadyRequest,
+    session: SessionDep,
+    redis: CustomRedis = Depends(get_redis),
+):
+    """
+    Завершение хода (Бито).
+    Может вызвать только атакующий игрок.
+    - Проверяет, что все карты отбиты.
+    - Очищает поле.
+    - Добирает карты игрокам до 6.
+    - Если у кого-то не осталось карт → завершает игру и обновляет баланс.
+    """
+    logger.info(f"[BITO] room_id={req.room_id}, tg_id={req.tg_id}")
+
+    raw = await redis.get(req.room_id)
+    if not raw:
+        raise HTTPException(status_code=404, detail="Комната не найдена")
+
+    room = json.loads(raw)
+    field = room.get("field", [])
+    deck = room.get("deck", [])
+    hands = room.get("hands", {})
+    stake = room.get("stake")
+    players = room.get("players", {})
+    attacker = room.get("attacker")
+
+    # --- Проверяем, что нажал атакующий ---
+    if str(req.tg_id) != str(attacker):
+        raise HTTPException(status_code=400, detail="Бито может вызвать только атакующий игрок")
+
+    # --- Проверяем, что все карты отбиты ---
+    if any(pair["defend"] is None for pair in field):
+        raise HTTPException(status_code=400, detail="На столе есть неотбитые карты")
+
+    # --- Очищаем поле ---
+    room["field"] = []
+    logger.debug("[BITO] Поле очищено")
+
+    # --- Добор карт ---
+    order = [attacker] + [pid for pid in players.keys() if pid != attacker]
+    for pid in order:
+        if deck and len(hands[pid]) < 6:
+            need = 6 - len(hands[pid])
+            take = deck[:need]
+            hands[pid].extend(take)
+            deck = deck[need:]
+            logger.debug(f"[BITO] Игрок {pid} добрал карты: {take}")
+
+    room["hands"] = hands
+    room["deck"] = deck
+
+    # --- Проверка на окончание игры ---
+    winner = None
+    for pid, hand in hands.items():
+        if not hand:  # у игрока кончились карты
+            winner = pid
+
+    if winner:
+        loser = [pid for pid in players.keys() if pid != winner][0]
+        logger.info(f"[BITO] Игра окончена! Победитель {winner}, проигравший {loser}")
+
+        # обновляем балансы
+        winner_user = await UserDAO.find_one_or_none(session, tg_id=int(winner))
+        loser_user = await UserDAO.find_one_or_none(session, tg_id=int(loser))
+
+        if not winner_user or not loser_user:
+            raise HTTPException(status_code=500, detail="Ошибка при обновлении баланса")
+
+        winner_user.balance += stake
+        loser_user.balance -= stake
+        await session.commit()
+
+        # отправляем сообщение в Centrifugo
+        await send_msg(
+            event="game_over",
+            payload={
+                "room_id": req.room_id,
+                "winner": winner,
+                "loser": loser,
+                "stake": stake,
+            },
+            channel_name=f"room#{req.room_id}",
+        )
+
+        # удаляем комнату из Redis
+        await redis.delete(req.room_id)
+        return {"ok": True, "winner": winner, "loser": loser}
+
+    # --- Обновляем комнату ---
+    # меняем атакующего → теперь атакует защищающийся
+    next_attacker = [pid for pid in players.keys() if pid != attacker][0]
+    room["attacker"] = next_attacker
+
+    await redis.set(req.room_id, json.dumps(room))
+
+    # отправляем обновление в Centrifugo
+    await send_msg(
+        event="bito",
+        payload={
+            "room_id": req.room_id,
+            "hands_count": {pid: len(h) for pid, h in hands.items()},
+            "deck_count": len(deck),
+            "attacker": next_attacker,
+        },
+        channel_name=f"room#{req.room_id}",
+    )
+
+    return {"ok": True, "room": room}
+
+
+@router.post("/beru")
+async def beru(
+    req: ReadyRequest,
+    session: SessionDep,
+    redis: CustomRedis = Depends(get_redis),
+):
+    """
+    Защищающийся игрок берёт карты со стола.
+    - Может вызвать только защищающийся игрок.
+    - Все карты на поле добавляются в его руку.
+    - Добор карт из колоды: первым добирает атакующий, потом защищающийся.
+    - Если у кого-то не осталось карт → игра завершается.
+    """
+    logger.info(f"[BERU] room_id={req.room_id}, tg_id={req.tg_id}")
+
+    raw = await redis.get(req.room_id)
+    if not raw:
+        raise HTTPException(status_code=404, detail="Комната не найдена")
+
+    room = json.loads(raw)
+    field = room.get("field", [])
+    deck = room.get("deck", [])
+    hands = room.get("hands", {})
+    players = room.get("players", {})
+    attacker = room.get("attacker")
+
+    # --- Проверка, что игрок защищающийся ---
+    defenders = [pid for pid in players.keys() if pid != attacker]
+    if str(req.tg_id) not in defenders:
+        raise HTTPException(status_code=400, detail="Беру может вызвать только защищающийся игрок")
+
+    defender = str(req.tg_id)
+
+    # --- Добавляем все карты со стола защитнику ---
+    taken_cards = []
+    for pair in field:
+        taken_cards.append(pair["attack"])
+        if pair["defend"] is not None:
+            taken_cards.append(pair["defend"])
+
+    hands[defender].extend(taken_cards)
+    logger.debug(f"[BERU] Игрок {defender} взял карты со стола: {taken_cards}")
+
+    # очищаем поле
+    room["field"] = []
+
+    # --- Добор карт из колоды ---
+    order = [attacker, defender]  # сначала атакующий
+    for pid in order:
+        if deck and len(hands[pid]) < 6:
+            need = 6 - len(hands[pid])
+            take = deck[:need]
+            hands[pid].extend(take)
+            deck = deck[need:]
+            logger.debug(f"[BERU] Игрок {pid} добрал карты: {take}")
+
+    room["hands"] = hands
+    room["deck"] = deck
+
+    # --- Проверка на окончание игры ---
+    winner = None
+    for pid, hand in hands.items():
+        if not hand:  # у игрока пустая рука
+            winner = pid
+
+    if winner:
+        loser = [pid for pid in players.keys() if pid != winner][0]
+        logger.info(f"[BERU] Игра окончена! Победитель {winner}, проигравший {loser}")
+
+        winner_user = await UserDAO(session).find_one_or_none(tg_id=int(winner))
+        loser_user = await UserDAO(session).find_one_or_none(tg_id=int(loser))
+
+        if not winner_user or not loser_user:
+            raise HTTPException(status_code=500, detail="Ошибка при обновлении баланса")
+
+        stake = room.get("stake", 0)
+        winner_user.balance += stake
+        loser_user.balance -= stake
+        await session.commit()
+
+        await send_msg(
+            event="game_over",
+            payload={
+                "room_id": req.room_id,
+                "winner": winner,
+                "loser": loser,
+                "stake": stake,
+            },
+            channel_name=f"room#{req.room_id}",
+        )
+
+        await redis.delete(req.room_id)
+        return {"ok": True, "winner": winner, "loser": loser}
+
+    # --- Обновляем комнату ---
+    # В случае "беру" атакующий остаётся тем же самым
+    room["attacker"] = attacker
+
+    await redis.set(req.room_id, json.dumps(room))
+
+    # --- Уведомляем игроков через Centrifugo ---
+    await send_msg(
+        event="beru",
+        payload={
+            "room_id": req.room_id,
+            "hands_count": {pid: len(h) for pid, h in hands.items()},
+            "deck_count": len(deck),
+            "attacker": attacker,
+        },
+        channel_name=f"room#{req.room_id}",
+    )
+
+    return {"ok": True, "room": room}
+
 
 #
 #
