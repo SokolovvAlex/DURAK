@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     POSTGRES_PORT: int
     POSTGRES_HOST: str
 
-    DB_URL: str = "postgresql+asyncpg://postgres:postgres@postgres:5432/durak"
+    DB_URL: str = f"postgresql+asyncpg://postgres:postgres@localhost:5432/durak"
 
     DB_PATH: str = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "..", "data", "db.sqlite3"

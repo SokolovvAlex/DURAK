@@ -100,5 +100,4 @@ class FinishTurnResponse(BaseModel):
 class MoveRequest(BaseModel):
     room_id: str
     tg_id: int
-    card: list[str]   # ["8", "♠"] например
-    target: Optional[list[str]] = None  # если ход защитника — какую карту бьём
+    cards: list[list[str]]
