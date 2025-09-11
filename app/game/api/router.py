@@ -11,7 +11,7 @@ from app.database import SessionDep
 from app.game.api.schemas import FindPartnerResponse, FindPartnerRequest, ReadyResponse, ReadyRequest, MoveRequest
 from app.game.api.utils import send_msg, get_all_rooms
 from app.game.core.constants import CARDS_IN_HAND_MAX, DECK, NAME_TO_VALUE
-from app.game.core.durak import Durak
+# from app.game.core.burkozel import Durak
 from app.game.redis_dao.custom_redis import CustomRedis
 from app.game.redis_dao.manager import get_redis
 from app.users.dao import UserDAO
