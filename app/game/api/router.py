@@ -17,7 +17,7 @@ from app.game.redis_dao.custom_redis import CustomRedis
 from app.game.redis_dao.manager import get_redis
 from app.users.dao import UserDAO
 
-router = APIRouter(prefix="/durak", tags=["DURAK"])
+router = APIRouter(prefix="/burkozel", tags=["Burkozel"])
 
 
 @router.post("/find_player", response_model=FindPartnerResponse)
@@ -162,17 +162,14 @@ async def ready(req: ReadyRequest, redis=Depends(get_redis)):
 @router.post("/move")
 async def move(req: MoveRequest, redis: CustomRedis = Depends(get_redis)):
     """
-    Обработка хода игрока (атака или защита).
-    Вход:
-      - room_id
-      - tg_id
-      - cards: список карт [["10","♣"],["8","♣"]]
-
-    Логика:
-      • если поле пустое -> атака
-      • если поле уже есть -> защита
-      • после раздачи — определяем победителя взятки, начисляем очки
-      • добор карт по одной (сначала победитель, потом проигравший)
+    Обработка хода игрока.
+    • Если поле пустое -> атака.
+    • Если поле уже есть -> защита.
+    • После защиты:
+        - определяем победителя раздачи,
+        - начисляем очки,
+        - очищаем поле,
+        - добираем карты по одной, пока у игроков не будет по 4.
     """
     logger.info(f"[MOVE] room_id={req.room_id}, tg_id={req.tg_id}, cards={req.cards}")
 
@@ -204,16 +201,14 @@ async def move(req: MoveRequest, redis: CustomRedis = Depends(get_redis)):
     # атака
     # ========================
     if field["attack"] is None:
-        # в атаке можно только одной мастью или комбинацией
+        # можно ходить только одной мастью или комбинацией
         suits = {c[1] for c in cards}
         if len(suits) != 1:
             raise HTTPException(status_code=400, detail="Можно ходить только картами одной масти или комбинацией")
 
-        # убираем карты из руки
         for c in cards:
             hand.remove(list(c))
 
-        # сохраняем атаку
         field["attack"] = {"player": req.tg_id, "cards": [list(c) for c in cards]}
         field["defend"] = None
         field["winner"] = None
@@ -232,19 +227,14 @@ async def move(req: MoveRequest, redis: CustomRedis = Depends(get_redis)):
             raise HTTPException(status_code=400, detail="Количество карт для защиты должно совпадать с атакой")
 
         # проверка побития
-        beats_all = True
-        for atk, dfn in zip(atk_cards, cards):
-            if not can_beat(atk, dfn, trump):
-                beats_all = False
-                break
+        beats_all = all(can_beat(atk, dfn, trump) for atk, dfn in zip(atk_cards, cards))
 
-        # убираем карты из руки
         for c in cards:
             hand.remove(list(c))
 
-        # сохраняем защиту
         field["defend"] = {"player": req.tg_id, "cards": [list(c) for c in cards]}
 
+        # определяем победителя
         if beats_all:
             winner = req.tg_id
         else:
@@ -253,30 +243,29 @@ async def move(req: MoveRequest, redis: CustomRedis = Depends(get_redis)):
         field["winner"] = winner
         logger.info(f"[MOVE] Победитель раздачи: {winner}")
 
-        # начисляем очки победителю
+        # начисляем очки
         taken_cards = atk_cards + cards
         points = sum(card_points(c) for c in taken_cards)
         players[str(winner)]["round_score"] += points
 
-        # добор карт по одной: сначала победитель, потом проигравший
-        order = [str(winner)] + [pid for pid in players.keys() if int(pid) != winner]
+        # очищаем поле
+        room["field"] = {"attack": None, "defend": None, "winner": None}
+
+        # добор карт по одной (сначала победитель, потом проигравший)
+        order = [str(winner)] + [pid for pid in players.keys() if pid != str(winner)]
         for pid in order:
-            if deck and len(players[pid]["hand"]) < 6:
+            while deck and len(players[pid]["hand"]) < 4:
                 card = deck.pop(0)
                 players[pid]["hand"].append(card)
-                logger.debug(f"[MOVE] Игрок {pid} добрал карту {card}")
+                logger.debug(f"[MOVE] Игрок {pid} добрал {card}")
 
         # следующий атакующий = победитель
         room["attacker"] = str(winner)
-
-        # очищаем поле
-        room["field"] = {"attack": None, "defend": None, "winner": None}
 
     # сохраняем
     players[str(req.tg_id)]["hand"] = hand
     room["players"] = players
     room["deck"] = deck
-    room["field"] = field
     await redis.set(req.room_id, json.dumps(room))
 
     # уведомляем игроков
@@ -325,12 +314,54 @@ async def clear_room(room_id: str, redis_client: CustomRedis = Depends(get_redis
     return {"status": "ok", "message": f"Ключ для комнаты {room_id} удален"}
 
 
-@router.post("/clear_redis")
-async def clear_redis(redis_client: CustomRedis = Depends(get_redis)):
-    # Очищаем все ключи из Redis
-    await redis_client.flushdb()
-    return {"message": "Redis база данных очищена"}
+@router.post("/create_test_room")
+async def create_test_room(redis: CustomRedis = Depends(get_redis)):
+    """
+    Создаёт тестовую комнату с полной колодой и раздачей по 4 карты каждому.
+    """
+    from app.game.core.constants import DECK
+    deck = list(DECK)
+    random.shuffle(deck)
 
+    room_id = f"10_{uuid.uuid4().hex[:8]}"
+    trump = deck[0][1]
+    deck = deck[1:]  # убираем карту для козыря (но масть известна)
+
+    # выдаём по 4 карты игрокам
+    hand1, hand2 = deck[:4], deck[4:8]
+    deck = deck[8:]
+
+    room = {
+        "room_id": room_id,
+        "stake": 10,
+        "created_at": datetime.utcnow().isoformat(),
+        "status": "playing",
+        "players": {
+            "7022782558": {
+                "nickname": "sasha",
+                "is_ready": True,
+                "hand": hand1,
+                "round_score": 0,
+                "penalty": 0
+            },
+            "5254325840": {
+                "nickname": "ed",
+                "is_ready": True,
+                "hand": hand2,
+                "round_score": 0,
+                "penalty": 0
+            }
+        },
+        "deck": deck,
+        "trump": trump,
+        "field": {"attack": None, "defend": None, "winner": None},
+        "attacker": "7022782558"
+    }
+
+    await redis.set(room_id, json.dumps(room))
+    logger.info(f"[TEST] Создана тестовая комната {room_id}")
+
+    return {"ok": True, "room": room}
 
 @router.post("/create_test_room")
 async def create_test_room(redis: CustomRedis = Depends(get_redis)):

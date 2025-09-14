@@ -414,3 +414,33 @@
 2025-09-11 at 21:56:04 | INFO | [MOVE] room_id=10_071b017b, tg_id=7022782558, cards=[['9', '♦'], ['A', '♣']]
 2025-09-11 at 21:56:04 | INFO | [MOVE] Победитель раздачи: 7022782558
 2025-09-11 at 21:56:04 | INFO | [Centrifugo] -> channel=room#10_071b017b, event=move, status=True
+2025-09-12 at 10:21:30 | INFO | Бот запущен...
+2025-09-12 at 10:21:30 | INFO | Redis подключен успешно
+2025-09-12 at 10:29:48 | INFO | [MOVE] room_id=10_071b017b, tg_id=7022782558, cards=[['6', '♥']]
+2025-09-12 at 10:37:21 | INFO | Бот остановлен...
+2025-09-12 at 10:37:21 | INFO | Redis соединение закрыто
+2025-09-12 at 10:37:28 | INFO | Бот запущен...
+2025-09-12 at 10:37:28 | INFO | Redis подключен успешно
+2025-09-12 at 10:38:21 | INFO | Бот запущен...
+2025-09-12 at 10:38:21 | INFO | Redis подключен успешно
+2025-09-12 at 10:39:26 | INFO | [TEST] Создана тестовая комната 10_a42fe7db
+2025-09-12 at 10:44:10 | INFO | [MOVE] room_id=10_a42fe7db, tg_id=7022782558, cards=[['8', '♠']]
+2025-09-12 at 10:44:10 | INFO | [MOVE] Игрок 7022782558 атаковал [('8', '♠')]
+2025-09-12 at 10:44:11 | INFO | [Centrifugo] -> channel=room#10_a42fe7db, event=move, status=True
+2025-09-12 at 10:44:38 | INFO | [MOVE] room_id=10_a42fe7db, tg_id=5254325840, cards=[['8', '♦']]
+2025-09-12 at 10:44:38 | INFO | [MOVE] Победитель раздачи: 7022782558
+2025-09-12 at 10:44:39 | INFO | [Centrifugo] -> channel=room#10_a42fe7db, event=move, status=True
+2025-09-12 at 10:45:38 | INFO | [MOVE] room_id=10_a42fe7db, tg_id=7022782558, cards=[['J', '♣']]
+2025-09-12 at 10:45:38 | INFO | [MOVE] Игрок 7022782558 атаковал [('J', '♣')]
+2025-09-12 at 10:45:39 | INFO | [Centrifugo] -> channel=room#10_a42fe7db, event=move, status=True
+2025-09-12 at 10:46:03 | INFO | [MOVE] room_id=10_a42fe7db, tg_id=5254325840, cards=[['A', '♣']]
+2025-09-12 at 10:46:03 | INFO | [MOVE] Победитель раздачи: 5254325840
+2025-09-12 at 10:46:04 | INFO | [Centrifugo] -> channel=room#10_a42fe7db, event=move, status=True
+2025-09-12 at 10:46:44 | INFO | [MOVE] room_id=10_a42fe7db, tg_id=5254325840, cards=[['Q', '♠']]
+2025-09-12 at 10:46:44 | INFO | [MOVE] Игрок 5254325840 атаковал [('Q', '♠')]
+2025-09-12 at 10:46:45 | INFO | [Centrifugo] -> channel=room#10_a42fe7db, event=move, status=True
+2025-09-12 at 10:47:08 | INFO | [MOVE] room_id=10_a42fe7db, tg_id=7022782558, cards=[['K', '♠']]
+2025-09-12 at 10:48:02 | INFO | [MOVE] room_id=10_a42fe7db, tg_id=7022782558, cards=[['7', '♦']]
+2025-09-12 at 10:48:47 | INFO | [MOVE] room_id=10_a42fe7db, tg_id=7022782558, cards=[['9', '♠']]
+2025-09-12 at 10:48:47 | INFO | [MOVE] Победитель раздачи: 5254325840
+2025-09-12 at 10:48:48 | INFO | [Centrifugo] -> channel=room#10_a42fe7db, event=move, status=True
