@@ -3,13 +3,14 @@ import json
 import uuid
 from datetime import datetime
 import random
+from typing import Optional, List, Dict, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from loguru import logger
 
 from app.database import SessionDep
 from app.game.api.schemas import FindPartnerResponse, FindPartnerRequest, ReadyResponse, ReadyRequest, MoveRequest
-from app.game.api.utils import send_msg, get_all_rooms
+from app.game.api.utils import send_msg, get_all_rooms, _is_waiting, card_points, can_beat
 from app.game.core.burkozel import Burkozel
 from app.game.core.constants import CARDS_IN_HAND_MAX, DECK, NAME_TO_VALUE
 # from app.game.core.burkozel import Durak
@@ -278,33 +279,27 @@ async def move(req: MoveRequest, redis: CustomRedis = Depends(get_redis)):
     return {"ok": True, "room": room}
 
 
-# ========================
-# Вспомогательные функции
-# ========================
-
-def card_points(card):
-    """Очки карты"""
-    from app.game.core.constants import CARD_POINTS
-    return CARD_POINTS.get(card[0], 0)
-
-
-def can_beat(atk, dfn, trump):
-    """Можно ли побить карту atk картой dfn"""
-    from app.game.core.constants import NAME_TO_VALUE
-    n1, s1 = atk
-    n2, s2 = dfn
-    if s1 == s2:
-        return NAME_TO_VALUE[n2] > NAME_TO_VALUE[n1]
-    if s2 == trump and s1 != trump:
-        return True
-    return False
-
-
 @router.get("/rooms")
-async def list_rooms(redis: CustomRedis = Depends(get_redis)):
-    """Получить список всех комнат."""
-    rooms = await get_all_rooms(redis)
-    return {"count": len(rooms), "rooms": rooms}
+async def list_rooms(
+    redis: "CustomRedis" = Depends(get_redis),
+    bet: Optional[int] = Query(None, description="Фильтр по ставке: ключи вида '<bet>_<id>'"),
+):
+    """
+    Возвращает только комнаты, которые ожидают подключения.
+    Если передан bet — ищем комнаты по ключам, начинающимся с '{bet}_'.
+    Если bet не передан — используем общий сборщик get_all_rooms(redis).
+    """
+    try:
+        if bet is not None:
+            rooms = await redis.get_rooms_by_bet(bet)
+        else:
+            rooms = await get_all_rooms(redis)
+
+        waiting = [r for r in rooms if _is_waiting(r)]
+        return {"count": len(waiting), "rooms": waiting}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list rooms: {e}")
 
 
 @router.post("/clear_room/{room_id}")
@@ -362,6 +357,65 @@ async def create_test_room(redis: CustomRedis = Depends(get_redis)):
     logger.info(f"[TEST] Создана тестовая комната {room_id}")
 
     return {"ok": True, "room": room}
+
+
+@router.post("/join_room")
+async def join_room(
+    room_id: str = Body(...),
+    tg_id: int = Body(...),
+    nickname: str = Body(...),
+    redis: CustomRedis = Depends(get_redis)
+):
+    """
+    Присоединение игрока к существующей комнате.
+    """
+    logger.info(f"[JOIN_ROOM] room_id={room_id}, tg_id={tg_id}, nickname={nickname}")
+
+    raw = await redis.get(room_id)
+    if not raw:
+        raise HTTPException(status_code=404, detail="Комната не найдена")
+    room = json.loads(raw)
+
+    players = room.get("players", {})
+
+    if str(tg_id) in players:
+        raise HTTPException(status_code=400, detail="Игрок уже в комнате")
+
+    if len(players) >= 2:
+        raise HTTPException(status_code=400, detail="Комната уже заполнена")
+
+    # Добавляем игрока
+    players[str(tg_id)] = {
+        "nickname": nickname,
+        "is_ready": False,
+        "hand": [],
+        "round_score": 0,
+        "penalty": 0,
+    }
+
+    room["players"] = players
+    if len(players) == 2:
+        room["status"] = "matched"
+
+    await redis.set(room_id, json.dumps(room))
+
+    # Уведомляем игроков через Centrifugo
+    await send_msg(
+        "player_joined",
+        {
+            "room_id": room_id,
+            "player": {
+                "tg_id": tg_id,
+                "nickname": nickname,
+            },
+            "players": list(players.keys()),
+            "status": room["status"],
+        },
+        channel_name=f"room#{room_id}",
+    )
+
+    return {"ok": True, "room": room}
+
 
 @router.post("/create_test_room")
 async def create_test_room(redis: CustomRedis = Depends(get_redis)):

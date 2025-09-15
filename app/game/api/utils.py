@@ -137,3 +137,53 @@ async def get_user_info(session, tg_id: int) -> dict:
     if not full_user_data:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
     return {"username": full_user_data.username}
+
+
+# ========================
+# Вспомогательные функции
+# ========================
+
+def card_points(card):
+    """Очки карты"""
+    from app.game.core.constants import CARD_POINTS
+    return CARD_POINTS.get(card[0], 0)
+
+
+def can_beat(atk, dfn, trump):
+    """Можно ли побить карту atk картой dfn"""
+    from app.game.core.constants import NAME_TO_VALUE
+    n1, s1 = atk
+    n2, s2 = dfn
+    if s1 == s2:
+        return NAME_TO_VALUE[n2] > NAME_TO_VALUE[n1]
+    if s2 == trump and s1 != trump:
+        return True
+    return False
+
+
+def _is_waiting(room: Dict[str, Any]) -> bool:
+    """
+    Определяем «ожидание подключения». Поддерживаем несколько вариантов:
+    - явный флаг is_waiting = True
+    - статус среди {'waiting', 'open', 'pending'}
+    - players < capacity
+    """
+    if not isinstance(room, dict):
+        return False
+
+    if "is_waiting" in room:
+        try:
+            return bool(room.get("is_waiting"))
+        except Exception:
+            pass
+
+    status = str(room.get("status", "")).lower()
+    if status in {"waiting", "open", "pending"}:
+        return True
+
+    try:
+        players = room.get("players") or []
+        capacity = int(room.get("capacity") or 0)
+        return isinstance(players, list) and len(players) < capacity
+    except Exception:
+        return False

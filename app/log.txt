@@ -444,3 +444,19 @@
 2025-09-12 at 10:48:47 | INFO | [MOVE] room_id=10_a42fe7db, tg_id=7022782558, cards=[['9', '♠']]
 2025-09-12 at 10:48:47 | INFO | [MOVE] Победитель раздачи: 5254325840
 2025-09-12 at 10:48:48 | INFO | [Centrifugo] -> channel=room#10_a42fe7db, event=move, status=True
+2025-09-15 at 23:23:30 | INFO | Бот запущен...
+2025-09-15 at 23:23:34 | ERROR | Ошибка подключения к Redis: Error Multiple exceptions: [Errno 10061] Connect call failed ('::1', 6379, 0, 0), [Errno 10061] Connect call failed ('127.0.0.1', 6379) connecting to localhost:6379.
+2025-09-15 at 23:25:15 | INFO | Бот запущен...
+2025-09-15 at 23:25:15 | INFO | Redis подключен успешно
+2025-09-15 at 23:25:51 | INFO | Создана новая комната 100_dac6d5be пользователем 5254325840
+2025-09-15 at 23:26:39 | INFO | [JOIN_ROOM] room_id=100_dac6d5be, tg_id=7022782558, nickname=sasha
+2025-09-15 at 23:26:39 | INFO | [Centrifugo] -> channel=room#100_dac6d5be, event=player_joined, status=True
+2025-09-15 at 23:37:59 | INFO | Бот запущен...
+2025-09-15 at 23:37:59 | INFO | Redis подключен успешно
+2025-09-15 at 23:39:06 | INFO | [TEST] Создана тестовая комната 10_4ad1fc77
+2025-09-15 at 23:39:55 | INFO | Создана новая комната 10_a535d472 пользователем 7022782558
+2025-09-15 at 23:40:15 | INFO | Создана новая комната 100_90d4eadc пользователем 5254325840
+2025-09-15 at 23:51:27 | INFO | Бот остановлен...
+2025-09-15 at 23:51:27 | INFO | Redis соединение закрыто
+2025-09-15 at 23:51:37 | INFO | Бот запущен...
+2025-09-15 at 23:51:37 | INFO | Redis подключен успешно

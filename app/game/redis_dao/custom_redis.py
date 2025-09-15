@@ -1,7 +1,7 @@
 import json
 from redis.asyncio import Redis
 from loguru import logger
-from typing import Any, Callable, Awaitable
+from typing import Any, Callable, Awaitable, Dict, List
 
 
 class CustomRedis(Redis):
@@ -95,3 +95,47 @@ class CustomRedis(Redis):
             logger.info(f"Данные сохранены в кэш для ключа: {cache_key} с TTL: {ttl} сек")
 
             return processed_data
+
+
+    async def get_rooms_by_bet(self, bet: int) -> List[Dict[str, Any]]:
+        """
+        Возвращает список комнат, чьи ключи начинаются со строки '{bet}_'.
+        Предполагается, что каждая комната хранится под ключом = её id (например, '10_a535d472')
+        и значение — JSON-строка с полями комнаты.
+        Если у тебя комнаты хранятся НЕ как JSON-строка, см. комментарий внутри.
+        """
+        pattern = f"{bet}_*"
+        rooms: List[Dict[str, Any]] = []
+
+        async for raw_key in self.scan_iter(match=pattern, count=1000):
+            key = raw_key.decode() if isinstance(raw_key, (bytes, bytearray)) else raw_key
+            try:
+                raw = await self.get(key)  # <-- если у тебя Hash, замени на: data = await self.hgetall(key) + декод
+                if raw is None:
+                    continue
+
+                if isinstance(raw, (bytes, bytearray)):
+                    raw = raw.decode()
+
+                data: Dict[str, Any]
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    # если хранится как Hash, раскомментируй этот блок и закомментируй GET/JSON выше:
+                    # raw_hash = await self.hgetall(key)
+                    # data = {
+                    #     (k.decode() if isinstance(k, (bytes, bytearray)) else k):
+                    #     (v.decode() if isinstance(v, (bytes, bytearray)) else v)
+                    #     for k, v in raw_hash.items()
+                    # }
+                    # или, если хранится как строка — оборачиваем как есть:
+                    data = {"value": raw}
+
+                # добавим id ключа для удобства
+                data.setdefault("id", key)
+                rooms.append(data)
+
+            except Exception as e:
+                logger.warning("Не удалось прочитать комнату %s: %s", key, e)
+
+        return rooms
