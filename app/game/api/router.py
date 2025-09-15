@@ -161,7 +161,7 @@ async def ready(req: ReadyRequest, redis=Depends(get_redis)):
 
 
 @router.post("/move")
-async def move(req: MoveRequest, redis: CustomRedis = Depends(get_redis)):
+async def move(session: SessionDep, req: MoveRequest, redis: CustomRedis = Depends(get_redis)):
     """
     Обработка хода игрока.
     • Если поле пустое -> атака.
@@ -252,7 +252,7 @@ async def move(req: MoveRequest, redis: CustomRedis = Depends(get_redis)):
         # очищаем поле
         room["field"] = {"attack": None, "defend": None, "winner": None}
 
-        # добор карт по одной (сначала победитель, потом проигравший)
+        # добор карт по одной
         order = [str(winner)] + [pid for pid in players.keys() if pid != str(winner)]
         for pid in order:
             while deck and len(players[pid]["hand"]) < 4:
@@ -263,18 +263,55 @@ async def move(req: MoveRequest, redis: CustomRedis = Depends(get_redis)):
         # следующий атакующий = победитель
         room["attacker"] = str(winner)
 
-    # сохраняем
+        # ========================
+        # проверка на конец игры
+        # ========================
+        if any(len(p["hand"]) == 0 for p in players.values()):
+            from app.payments.dao import TransactionDAO
+
+            # определяем победителя/проигравшего
+            scores = {pid: pdata["penalty"] for pid, pdata in players.items()}
+            game_winner = min(scores, key=scores.get)
+            game_loser = max(scores, key=scores.get)
+
+            dao = TransactionDAO(session)
+            balances = await dao.apply_game_result(
+                winner_id=int(game_winner),
+                loser_id=int(game_loser),
+                stake=room["stake"],
+            )
+            await session.commit()
+
+            logger.info(f"[GAME_OVER] Победитель {game_winner}, проигравший {game_loser}")
+
+            await send_msg(
+                event="game_over",
+                payload={
+                    "room_id": req.room_id,
+                    "winner": game_winner,
+                    "loser": game_loser,
+                    "stake": room["stake"],
+                    "balances": balances,
+                },
+                channel_name=f"room#{req.room_id}",
+            )
+
+            await redis.delete(req.room_id)
+            return {
+                "ok": True,
+                "winner": game_winner,
+                "loser": game_loser,
+                "balances": balances,
+            }
+
+        # сохраняем обновления
     players[str(req.tg_id)]["hand"] = hand
     room["players"] = players
     room["deck"] = deck
     await redis.set(req.room_id, json.dumps(room))
 
     # уведомляем игроков
-    await send_msg(
-        event="move",
-        payload={"room": room},
-        channel_name=f"room#{req.room_id}",
-    )
+    await send_msg(event="move", payload={"room": room}, channel_name=f"room#{req.room_id}")
 
     return {"ok": True, "room": room}
 
@@ -417,6 +454,14 @@ async def join_room(
     return {"ok": True, "room": room}
 
 
+@router.get("/all_rooms")
+async def list_rooms(redis: CustomRedis = Depends(get_redis)):
+    """Получить список всех комнат."""
+    rooms = await get_all_rooms(redis)
+    return {"count": len(rooms), "rooms": rooms}
+
+
+
 @router.post("/create_test_room")
 async def create_test_room(redis: CustomRedis = Depends(get_redis)):
     room_id = f"10_{uuid.uuid4().hex[:8]}"
@@ -451,5 +496,47 @@ async def create_test_room(redis: CustomRedis = Depends(get_redis)):
 
     await redis.set(room_id, json.dumps(room))
     logger.info(f"[TEST] Создана тестовая комната {room_id}")
+
+    return {"ok": True, "room": room}
+
+
+@router.post("/create_last_hand_room")
+async def create_last_hand_room(redis: CustomRedis = Depends(get_redis)):
+    """
+    Создаёт комнату с последней раздачей для проверки конца игры.
+    Игрок Sasha (10 штрафных очков) против Ed (6 штрафных очков).
+    """
+    room_id = "10_071b017b"
+    trump = "♦"
+
+    room = {
+        "room_id": room_id,
+        "stake": 10,
+        "created_at": datetime.utcnow().isoformat(),
+        "status": "playing",
+        "players": {
+            "7022782558": {
+                "nickname": "sasha",
+                "is_ready": True,
+                "hand": [["7", "♥"]],  # одна карта
+                "round_score": 25,
+                "penalty": 10
+            },
+            "5254325840": {
+                "nickname": "ed",
+                "is_ready": True,
+                "hand": [["8", "♥"]],  # одна карта, старше
+                "round_score": 28,
+                "penalty": 6
+            }
+        },
+        "deck": [],  # колода пуста — игра должна закончиться
+        "trump": trump,
+        "field": {"attack": None, "defend": None, "winner": None},
+        "attacker": "7022782558"  # Саша начинает
+    }
+
+    await redis.set(room_id, json.dumps(room))
+    logger.info(f"[TEST] Создана тестовая 'последняя раздача' {room_id}")
 
     return {"ok": True, "room": room}
