@@ -16,6 +16,7 @@ from app.game.core.constants import CARDS_IN_HAND_MAX, DECK, NAME_TO_VALUE
 # from app.game.core.burkozel import Durak
 from app.game.redis_dao.custom_redis import CustomRedis
 from app.game.redis_dao.manager import get_redis
+from app.payments.dao import TransactionDAO
 from app.users.dao import UserDAO
 
 router = APIRouter(prefix="/burkozel", tags=["Burkozel"])
@@ -296,14 +297,29 @@ async def move(session: SessionDep, req: MoveRequest, redis: CustomRedis = Depen
                 channel_name=f"room#{req.room_id}",
             )
 
-            await redis.delete(req.room_id)
+            # сбрасываем комнату в состояние ожидания
+            for pid, pdata in players.items():
+                pdata["hand"] = []
+                pdata["round_score"] = 0
+                pdata["penalty"] = 0
+                pdata["is_ready"] = False
+
+            room["deck"] = []
+            room["field"] = {"attack": None, "defend": None, "winner": None}
+            room["attacker"] = None
+            room["status"] = "waiting"
+            room["players"] = players
+
+            await redis.set(req.room_id, json.dumps(room))
+
             return {
                 "ok": True,
                 "winner": game_winner,
                 "loser": game_loser,
                 "balances": balances,
+                "message": "Игра завершена, комната сброшена в состояние ожидания",
             }
-
+        
         # сохраняем обновления
     players[str(req.tg_id)]["hand"] = hand
     room["players"] = players
@@ -314,6 +330,106 @@ async def move(session: SessionDep, req: MoveRequest, redis: CustomRedis = Depen
     await send_msg(event="move", payload={"room": room}, channel_name=f"room#{req.room_id}")
 
     return {"ok": True, "room": room}
+
+
+@router.post("/leave")
+async def leave(
+    req: ReadyRequest,
+    session: SessionDep,
+    redis: CustomRedis = Depends(get_redis),
+):
+    """
+    Игрок выходит из комнаты.
+    • Если игра не началась (is_ready=False) → просто убираем игрока.
+    • Если игра идёт → игрок считается проигравшим, игра завершается.
+    После окончания игра сбрасывается: руки/колода пустые, is_ready=False, status="waiting".
+    """
+    logger.info(f"[LEAVE] room_id={req.room_id}, tg_id={req.tg_id}")
+
+    raw = await redis.get(req.room_id)
+    if not raw:
+        raise HTTPException(status_code=404, detail="Комната не найдена")
+    room = json.loads(raw)
+
+    players = room.get("players", {})
+    player = players.get(str(req.tg_id))
+    if not player:
+        raise HTTPException(status_code=404, detail="Игрок не найден в комнате")
+
+    # случай 1: игрок еще не нажал ready
+    if not player.get("is_ready", False):
+        logger.info(f"[LEAVE] Игрок {req.tg_id} вышел до начала игры")
+        del players[str(req.tg_id)]
+
+        # если игроки остались → комната ждет
+        if players:
+            room["players"] = players
+            room["status"] = "waiting"
+            await redis.set(req.room_id, json.dumps(room))
+        else:
+            # если игроков нет → очищаем комнату
+            room.update({
+                "status": "waiting",
+                "players": {},
+                "deck": [],
+                "field": {"attack": None, "defend": None, "winner": None},
+                "attacker": None
+            })
+            await redis.set(req.room_id, json.dumps(room))
+
+        return {"ok": True, "message": "Игрок вышел из комнаты"}
+
+    # случай 2: игра уже идёт → игрок считается проигравшим
+    else:
+        logger.info(f"[LEAVE] Игрок {req.tg_id} вышел во время игры (проигрыш)")
+
+        # определяем второго игрока
+        opponent_id = [pid for pid in players.keys() if pid != str(req.tg_id)][0]
+
+        from app.payments.dao import TransactionDAO
+        dao = TransactionDAO(session)
+        balances = await dao.apply_game_result(
+            winner_id=int(opponent_id),
+            loser_id=int(req.tg_id),
+            stake=room["stake"],
+        )
+        await session.commit()
+
+        # уведомляем игроков
+        await send_msg(
+            event="game_over",
+            payload={
+                "room_id": req.room_id,
+                "winner": opponent_id,
+                "loser": str(req.tg_id),
+                "stake": room["stake"],
+                "balances": balances,
+            },
+            channel_name=f"room#{req.room_id}",
+        )
+
+        # сбрасываем комнату
+        for pid, pdata in players.items():
+            pdata["hand"] = []
+            pdata["round_score"] = 0
+            pdata["penalty"] = 0
+            pdata["is_ready"] = False
+
+        room["deck"] = []
+        room["field"] = {"attack": None, "defend": None, "winner": None}
+        room["attacker"] = None
+        room["status"] = "waiting"
+        room["players"] = players
+
+        await redis.set(req.room_id, json.dumps(room))
+
+        return {
+            "ok": True,
+            "winner": opponent_id,
+            "loser": str(req.tg_id),
+            "balances": balances,
+            "message": "Игра завершена, игрок вышел",
+        }
 
 
 @router.get("/rooms")
@@ -337,63 +453,6 @@ async def list_rooms(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list rooms: {e}")
-
-
-@router.post("/clear_room/{room_id}")
-async def clear_room(room_id: str, redis_client: CustomRedis = Depends(get_redis)):
-    # Асинхронно удаляем ключ, связанный с room_id
-    await redis_client.unlink(room_id)
-    return {"status": "ok", "message": f"Ключ для комнаты {room_id} удален"}
-
-
-@router.post("/create_test_room")
-async def create_test_room(redis: CustomRedis = Depends(get_redis)):
-    """
-    Создаёт тестовую комнату с полной колодой и раздачей по 4 карты каждому.
-    """
-    from app.game.core.constants import DECK
-    deck = list(DECK)
-    random.shuffle(deck)
-
-    room_id = f"10_{uuid.uuid4().hex[:8]}"
-    trump = deck[0][1]
-    deck = deck[1:]  # убираем карту для козыря (но масть известна)
-
-    # выдаём по 4 карты игрокам
-    hand1, hand2 = deck[:4], deck[4:8]
-    deck = deck[8:]
-
-    room = {
-        "room_id": room_id,
-        "stake": 10,
-        "created_at": datetime.utcnow().isoformat(),
-        "status": "playing",
-        "players": {
-            "7022782558": {
-                "nickname": "sasha",
-                "is_ready": True,
-                "hand": hand1,
-                "round_score": 0,
-                "penalty": 0
-            },
-            "5254325840": {
-                "nickname": "ed",
-                "is_ready": True,
-                "hand": hand2,
-                "round_score": 0,
-                "penalty": 0
-            }
-        },
-        "deck": deck,
-        "trump": trump,
-        "field": {"attack": None, "defend": None, "winner": None},
-        "attacker": "7022782558"
-    }
-
-    await redis.set(room_id, json.dumps(room))
-    logger.info(f"[TEST] Создана тестовая комната {room_id}")
-
-    return {"ok": True, "room": room}
 
 
 @router.post("/join_room")
@@ -460,6 +519,62 @@ async def list_rooms(redis: CustomRedis = Depends(get_redis)):
     rooms = await get_all_rooms(redis)
     return {"count": len(rooms), "rooms": rooms}
 
+
+@router.post("/clear_room/{room_id}")
+async def clear_room(room_id: str, redis_client: CustomRedis = Depends(get_redis)):
+    # Асинхронно удаляем ключ, связанный с room_id
+    await redis_client.unlink(room_id)
+    return {"status": "ok", "message": f"Ключ для комнаты {room_id} удален"}
+
+
+@router.post("/create_test_room")
+async def create_test_room(redis: CustomRedis = Depends(get_redis)):
+    """
+    Создаёт тестовую комнату с полной колодой и раздачей по 4 карты каждому.
+    """
+    from app.game.core.constants import DECK
+    deck = list(DECK)
+    random.shuffle(deck)
+
+    room_id = f"10_{uuid.uuid4().hex[:8]}"
+    trump = deck[0][1]
+    deck = deck[1:]  # убираем карту для козыря (но масть известна)
+
+    # выдаём по 4 карты игрокам
+    hand1, hand2 = deck[:4], deck[4:8]
+    deck = deck[8:]
+
+    room = {
+        "room_id": room_id,
+        "stake": 10,
+        "created_at": datetime.utcnow().isoformat(),
+        "status": "playing",
+        "players": {
+            "7022782558": {
+                "nickname": "sasha",
+                "is_ready": True,
+                "hand": hand1,
+                "round_score": 0,
+                "penalty": 0
+            },
+            "5254325840": {
+                "nickname": "ed",
+                "is_ready": True,
+                "hand": hand2,
+                "round_score": 0,
+                "penalty": 0
+            }
+        },
+        "deck": deck,
+        "trump": trump,
+        "field": {"attack": None, "defend": None, "winner": None},
+        "attacker": "7022782558"
+    }
+
+    await redis.set(room_id, json.dumps(room))
+    logger.info(f"[TEST] Создана тестовая комната {room_id}")
+
+    return {"ok": True, "room": room}
 
 
 @router.post("/create_test_room")
