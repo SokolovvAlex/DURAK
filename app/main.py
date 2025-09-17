@@ -10,7 +10,9 @@ from app.bot.create_bot import bot, dp, stop_bot, start_bot
 from app.bot.handlers.router import router as bot_router
 from app.config import settings
 
-from app.game.api.router import router as game_router
+from app.game.api.router import router as burkozel_router
+from app.game.all_games_router import router as game_router
+
 from app.game.redis_dao.manager import redis_manager
 from app.users.router import router as user_router
 from app.payments.router import router as payments_router
@@ -64,6 +66,8 @@ async def webhook(request: Request) -> None:
 
 
 app.include_router(game_router)
+app.include_router(burkozel_router)
+
 app.include_router(user_router)
 app.include_router(payments_router)
 
