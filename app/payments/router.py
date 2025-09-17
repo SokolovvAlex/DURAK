@@ -1,4 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
+
+from app.database import SessionDep
+from app.payments.dao import PaymentTransactionDAO, TransactionDAO
+from app.payments.schemas import TransactionStatsOut, UserTransactionsOut, TransactionOut
 from app.users.auth import get_current_user
 from app.users.models import User
 from app.config import settings
@@ -50,3 +54,21 @@ async def plat_callback(request: Request):
     #     update_transaction(merchant_order_id, posted=True)
 
     return {"ok": True}
+
+
+@router.get("/transactions/{tg_id}")
+async def get_user_transactions(
+        tg_id: int,
+        session: SessionDep
+):
+    """Получить все транзакции пользователя по tg_id с статистикой"""
+    transactions = await TransactionDAO.get_user_transactions(session, tg_id)
+    stats = await TransactionDAO.get_user_transactions_stats(session, tg_id)
+
+    if not transactions:
+        raise HTTPException(status_code=404, detail="No transactions found for user")
+
+    return UserTransactionsOut(
+        transactions=[TransactionOut.model_validate(tx) for tx in transactions],
+        stats=TransactionStatsOut(**stats)
+    )

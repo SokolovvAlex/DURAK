@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import List
 
-from sqlalchemy import select
+from sqlalchemy import select, func, case
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -96,3 +97,69 @@ class TransactionDAO:
             "winner_result": win_result.id,
             "loser_result": lose_result.id,
         }
+
+    @classmethod
+    async def get_user_transactions(cls, session: AsyncSession, tg_id: int) -> List[PaymentTransaction]:
+        """Получить все транзакции пользователя по tg_id"""
+        stmt = (
+            select(PaymentTransaction)
+            .join(User, PaymentTransaction.user_id == User.id)
+            .where(User.tg_id == tg_id)
+            .order_by(PaymentTransaction.created_at.desc())
+        )
+        result = await session.execute(stmt)
+        return result.scalars().all()
+
+    @classmethod
+    async def get_user_transactions_stats(cls, session: AsyncSession, tg_id: int) -> dict:
+        """Получить статистику транзакций пользователя по tg_id"""
+        stmt = (
+            select(
+                func.count(PaymentTransaction.id).label('total_transactions'),
+                func.sum(
+                    case((PaymentTransaction.type == TxTypeEnum.DEPOSIT, PaymentTransaction.amount), else_=0)).label(
+                    'total_deposits'),
+                func.sum(
+                    case((PaymentTransaction.type == TxTypeEnum.WITHDRAW, PaymentTransaction.amount), else_=0)).label(
+                    'total_withdrawals'),
+                func.sum(case((PaymentTransaction.type.in_([TxTypeEnum.PAYOUT, TxTypeEnum.REFERRAL_REWARD]),
+                               PaymentTransaction.amount), else_=0)).label('total_earned'),
+                func.sum(
+                    case((PaymentTransaction.type.in_([TxTypeEnum.LOSS]), PaymentTransaction.amount), else_=0)).label(
+                    'total_lost'),
+                func.sum(PaymentTransaction.amount).label('net_flow')
+            )
+            .join(User, PaymentTransaction.user_id == User.id)
+            .where(User.tg_id == tg_id)
+        )
+        result = await session.execute(stmt)
+        stats = result.first()
+
+        return {
+            'total_transactions': stats.total_transactions or 0,
+            'total_deposits': float(stats.total_deposits or 0),
+            'total_withdrawals': float(stats.total_withdrawals or 0),
+            'total_earned': float(stats.total_earned or 0),
+            'total_lost': float(stats.total_lost or 0),
+            'net_flow': float(stats.net_flow or 0)
+        }
+
+    @classmethod
+    async def get_user_transactions_by_type(
+            cls,
+            session: AsyncSession,
+            tg_id: int,
+            transaction_type: TxTypeEnum
+    ) -> List[PaymentTransaction]:
+        """Получить транзакции пользователя по типу"""
+        stmt = (
+            select(PaymentTransaction)
+            .join(User, PaymentTransaction.user_id == User.id)
+            .where(
+                User.tg_id == tg_id,
+                PaymentTransaction.type == transaction_type
+            )
+            .order_by(PaymentTransaction.created_at.desc())
+        )
+        result = await session.execute(stmt)
+        return result.scalars().all()

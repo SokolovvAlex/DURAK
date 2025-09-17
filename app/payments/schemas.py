@@ -1,26 +1,10 @@
 from decimal import Decimal
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from enum import Enum
 
-
-# ==== ENUMS (синхронизированы с моделями) ====
-
-class TxTypeEnum(str, Enum):
-    DEPOSIT = "deposit"
-    WITHDRAW = "withdraw"
-    REFERRAL_REWARD = "referral_reward"
-    BET = "bet"
-    PAYOUT = "payout"
-    ADMIN_ADJUST = "admin_adjust"
-
-
-class TxStatusEnum(str, Enum):
-    PENDING = "pending"
-    POSTED = "posted"
-    FAILED = "failed"
-    REVERSED = "reversed"
+from app.payments.models import TxStatusEnum, TxTypeEnum
 
 
 # ==== ЗАПРОСЫ ====
@@ -32,21 +16,6 @@ class DepositRequest(BaseModel):
 class WithdrawRequest(BaseModel):
     amount: Decimal = Field(..., gt=0, description="Сумма вывода")
     card: str = Field(..., min_length=12, max_length=19, description="Номер карты/кошелька")
-
-
-# ==== ОТВЕТЫ ====
-
-class TransactionOut(BaseModel):
-    id: int
-    user_id: int
-    type: TxTypeEnum
-    amount: Decimal
-    status: TxStatusEnum
-    created_at: datetime
-    ext_ref: Optional[str] = None
-
-    class Config:
-        from_attributes = True
 
 
 class DepositResponse(BaseModel):
@@ -70,3 +39,26 @@ class PlatCallback(BaseModel):
     status: str              # "success" / "failed"
     time: int
     sign: str
+
+
+class TransactionOut(BaseModel):
+    id: int
+    type: TxTypeEnum
+    amount: float
+    status: TxStatusEnum
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class TransactionStatsOut(BaseModel):
+    total_transactions: int
+    total_deposits: float
+    total_withdrawals: float
+    total_earned: float
+    total_lost: float
+    net_flow: float
+
+class UserTransactionsOut(BaseModel):
+    transactions: List[TransactionOut]
+    stats: TransactionStatsOut
