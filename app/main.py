@@ -72,5 +72,5 @@ app.include_router(payments_router)
 #docker run --name redis -d -p 6379:6379 redis
 #docker run -d -p 8000:8000 --name centrifugo my-centrifugo
 
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=8080, reload=True)
+# if __name__ == "__main__":
+#     uvicorn.run("main:app", host="127.0.0.1", port=8080, reload=True)
