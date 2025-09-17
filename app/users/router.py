@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query
 from app.database import SessionDep
 from app.users.dao import UserDAO
-from app.users.schemas import UserCreate, UserUpdate, UserOut
+from app.users.schemas import UserCreate, UserUpdate, UserOut, UserStatsOut
 
 router = APIRouter(prefix="/users", tags=["User"])
 
@@ -28,12 +28,12 @@ async def get_all_users(
     return [UserOut.model_validate(user) for user in users]
 
 
-@router.get("/get_current_user", response_model=UserOut)
+@router.get("/get_current_user", response_model=UserStatsOut)
 async def get_current_user(session: SessionDep, tg_id: int = Query(..., description="Telegram user id")):
-    user = await UserDAO.find_one_or_none(session, tg_id=tg_id)
-    if not user:
+    user_stats = await UserDAO.get_user_with_stats(session, tg_id=tg_id)
+    if not user_stats:
         raise HTTPException(status_code=404, detail="User not found")
-    return UserOut.model_validate(user)
+    return user_stats
 
 
 @router.patch("/update_user/{user_id}", response_model=UserOut)

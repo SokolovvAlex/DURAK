@@ -1,12 +1,15 @@
 from typing import Optional, Any
 
-from sqlalchemy import select
+from sqlalchemy import select, func, case
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dao.base import BaseDAO
+from app.game.models import GameResult, GameResultEnum
 from app.users.models import User
 from sqlalchemy import select, update as sa_update, delete as sa_delete
+
+from app.users.schemas import UserStatsOut
 
 
 class UserDAO:
@@ -75,3 +78,60 @@ class UserDAO:
         except SQLAlchemyError:
             await session.rollback()
             raise
+
+    @classmethod
+    async def get_user_with_stats(cls, session: AsyncSession, tg_id: int) -> Optional[UserStatsOut]:
+        # Подзапрос для статистики игр
+        game_stats_subquery = (
+            select(
+                GameResult.user_id,
+                func.count(GameResult.id).label('total_games'),
+                func.sum(case((GameResult.result == GameResultEnum.WIN, 1), else_=0)).label('wins'),
+                func.sum(case((GameResult.result == GameResultEnum.LOSS, 1), else_=0)).label('losses'),
+                func.sum(case((GameResult.result == GameResultEnum.WIN, GameResult.rate), else_=0)).label(
+                    'total_earned'),
+                func.sum(case((GameResult.result == GameResultEnum.LOSS, GameResult.rate), else_=0)).label('total_lost')
+            )
+            .group_by(GameResult.user_id)
+            .subquery()
+        )
+
+        stmt = (
+            select(
+                User,
+                func.coalesce(game_stats_subquery.c.total_games, 0).label('total_games'),
+                func.coalesce(game_stats_subquery.c.wins, 0).label('wins'),
+                func.coalesce(game_stats_subquery.c.losses, 0).label('losses'),
+                func.coalesce(game_stats_subquery.c.total_earned, 0).label('total_earned'),
+                func.coalesce(game_stats_subquery.c.total_lost, 0).label('total_lost'),
+                (func.coalesce(game_stats_subquery.c.total_earned, 0) -
+                 func.coalesce(game_stats_subquery.c.total_lost, 0)).label('net_profit')
+            )
+            .outerjoin(game_stats_subquery, User.id == game_stats_subquery.c.user_id)
+            .where(User.tg_id == tg_id)
+        )
+
+        result = await session.execute(stmt)
+        user_data = result.first()
+
+        if not user_data:
+            return None
+
+        user, total_games, wins, losses, total_earned, total_lost, net_profit = user_data
+
+        return UserStatsOut(
+            id=user.id,
+            tg_id=user.tg_id,
+            username=user.username,
+            name=user.name,
+            balance=user.balance,
+            is_admin=user.is_admin,
+            is_active=user.is_active,
+            created_at=user.created_at,
+            total_games=total_games,
+            wins=wins,
+            losses=losses,
+            total_earned=total_earned,
+            total_lost=total_lost,
+            net_profit=net_profit
+        )

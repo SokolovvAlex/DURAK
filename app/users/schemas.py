@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
@@ -37,3 +38,25 @@ class UserOut(BaseModel):
     is_active: bool
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class UserStatsOut(BaseModel):
+    id: int
+    tg_id: int
+    username: Optional[str]
+    name: Optional[str]
+    balance: float
+    is_admin: bool
+    is_active: bool
+    created_at: datetime
+
+    # Статистика
+    total_games: int
+    wins: int
+    losses: int
+    total_earned: float
+    total_lost: float
+    net_profit: float
+
+    class Config:
+        from_attributes = True
