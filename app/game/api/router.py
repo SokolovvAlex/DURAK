@@ -256,13 +256,15 @@ async def move(session: SessionDep, req: MoveRequest, redis: CustomRedis = Depen
         # очищаем поле
         room["field"] = {"attack": None, "defend": None, "winner": None}
 
-        # добор карт по одной
+        # добор карт по одной (по кругу)
         order = [str(winner)] + [pid for pid in players.keys() if pid != str(winner)]
-        for pid in order:
-            while deck and len(players[pid]["hand"]) < 4:
-                card = deck.pop(0)
-                players[pid]["hand"].append(card)
-                logger.debug(f"[MOVE] Игрок {pid} добрал {card}")
+
+        while deck and any(len(players[pid]["hand"]) < 4 for pid in order):
+            for pid in order:
+                if deck and len(players[pid]["hand"]) < 4:
+                    card = deck.pop(0)
+                    players[pid]["hand"].append(card)
+                    logger.debug(f"[MOVE] Игрок {pid} добрал {card}")
 
         # следующий атакующий = победитель
         room["attacker"] = str(winner)
