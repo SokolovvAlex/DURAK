@@ -161,6 +161,25 @@ def can_beat(atk, dfn, trump):
     return False
 
 
+def can_defend_all(atk_cards, def_cards, trump):
+    """
+    Проверяет, можно ли побить все атакующие карты данным набором защитных.
+    Порядок не важен, карты защиты используются только один раз.
+    """
+    if not atk_cards:
+        return True
+    if not def_cards:
+        return False
+
+    atk = atk_cards[0]
+    for i, dfn in enumerate(def_cards):
+        if can_beat(atk, dfn, trump):
+            # пробуем отбить этой картой и рекурсивно проверить остальные
+            if can_defend_all(atk_cards[1:], def_cards[:i] + def_cards[i+1:], trump):
+                return True
+    return False
+
+
 def _is_waiting(room: Dict[str, Any]) -> bool:
     """
     Определяем «ожидание подключения». Поддерживаем несколько вариантов:

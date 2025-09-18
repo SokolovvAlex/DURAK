@@ -10,7 +10,7 @@ from loguru import logger
 
 from app.database import SessionDep
 from app.game.api.schemas import FindPartnerResponse, FindPartnerRequest, ReadyResponse, ReadyRequest, MoveRequest
-from app.game.api.utils import send_msg, get_all_rooms, _is_waiting, card_points, can_beat
+from app.game.api.utils import send_msg, get_all_rooms, _is_waiting, card_points, can_beat, can_defend_all
 from app.game.core.burkozel import Burkozel
 from app.game.core.constants import CARDS_IN_HAND_MAX, DECK, NAME_TO_VALUE
 # from app.game.core.burkozel import Durak
@@ -226,11 +226,14 @@ async def move(session: SessionDep, req: MoveRequest, redis: CustomRedis = Depen
 
         atk_cards = [tuple(c) for c in field["attack"]["cards"]]
         if len(cards) != len(atk_cards):
-            raise HTTPException(status_code=400, detail="Количество карт для защиты должно совпадать с атакой")
+            raise HTTPException(
+                status_code=400,
+                detail="Количество карт для защиты должно совпадать с атакой"
+            )
 
-        # проверка побития
-        beats_all = all(can_beat(atk, dfn, trump) for atk, dfn in zip(atk_cards, cards))
+        beats_all = can_defend_all(atk_cards, cards, trump)
 
+        # убираем карты из руки
         for c in cards:
             hand.remove(list(c))
 
@@ -527,54 +530,54 @@ async def clear_room(room_id: str, redis_client: CustomRedis = Depends(get_redis
     return {"status": "ok", "message": f"Ключ для комнаты {room_id} удален"}
 
 
-@router.post("/create_test_room")
-async def create_test_room(redis: CustomRedis = Depends(get_redis)):
-    """
-    Создаёт тестовую комнату с полной колодой и раздачей по 4 карты каждому.
-    """
-    from app.game.core.constants import DECK
-    deck = list(DECK)
-    random.shuffle(deck)
-
-    room_id = f"10_{uuid.uuid4().hex[:8]}"
-    trump = deck[0][1]
-    deck = deck[1:]  # убираем карту для козыря (но масть известна)
-
-    # выдаём по 4 карты игрокам
-    hand1, hand2 = deck[:4], deck[4:8]
-    deck = deck[8:]
-
-    room = {
-        "room_id": room_id,
-        "stake": 10,
-        "created_at": datetime.utcnow().isoformat(),
-        "status": "playing",
-        "players": {
-            "7022782558": {
-                "nickname": "sasha",
-                "is_ready": True,
-                "hand": hand1,
-                "round_score": 0,
-                "penalty": 0
-            },
-            "5254325840": {
-                "nickname": "ed",
-                "is_ready": True,
-                "hand": hand2,
-                "round_score": 0,
-                "penalty": 0
-            }
-        },
-        "deck": deck,
-        "trump": trump,
-        "field": {"attack": None, "defend": None, "winner": None},
-        "attacker": "7022782558"
-    }
-
-    await redis.set(room_id, json.dumps(room))
-    logger.info(f"[TEST] Создана тестовая комната {room_id}")
-
-    return {"ok": True, "room": room}
+# @router.post("/create_test_room")
+# async def create_test_room(redis: CustomRedis = Depends(get_redis)):
+#     """
+#     Создаёт тестовую комнату с полной колодой и раздачей по 4 карты каждому.
+#     """
+#     from app.game.core.constants import DECK
+#     deck = list(DECK)
+#     random.shuffle(deck)
+#
+#     room_id = f"10_{uuid.uuid4().hex[:8]}"
+#     trump = deck[0][1]
+#     deck = deck[1:]  # убираем карту для козыря (но масть известна)
+#
+#     # выдаём по 4 карты игрокам
+#     hand1, hand2 = deck[:4], deck[4:8]
+#     deck = deck[8:]
+#
+#     room = {
+#         "room_id": room_id,
+#         "stake": 10,
+#         "created_at": datetime.utcnow().isoformat(),
+#         "status": "playing",
+#         "players": {
+#             "7022782558": {
+#                 "nickname": "sasha",
+#                 "is_ready": True,
+#                 "hand": hand1,
+#                 "round_score": 0,
+#                 "penalty": 0
+#             },
+#             "5254325840": {
+#                 "nickname": "ed",
+#                 "is_ready": True,
+#                 "hand": hand2,
+#                 "round_score": 0,
+#                 "penalty": 0
+#             }
+#         },
+#         "deck": deck,
+#         "trump": trump,
+#         "field": {"attack": None, "defend": None, "winner": None},
+#         "attacker": "7022782558"
+#     }
+#
+#     await redis.set(room_id, json.dumps(room))
+#     logger.info(f"[TEST] Создана тестовая комната {room_id}")
+#
+#     return {"ok": True, "room": room}
 
 
 @router.post("/create_test_room")
@@ -598,7 +601,7 @@ async def create_test_room(redis: CustomRedis = Depends(get_redis)):
             "5254325840": {
                 "nickname": "ed",
                 "is_ready": True,
-                "hand": [["A","♣"],["Q","♥"],["10","♠"],["8","♥"]],
+                "hand": [["A","♣"],["Q","♥"],["K","♠"],["8","♠"]],
                 "round_score": 0,
                 "penalty": 0
             }
