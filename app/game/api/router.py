@@ -658,3 +658,10 @@ async def create_last_hand_room(redis: CustomRedis = Depends(get_redis)):
     logger.info(f"[TEST] Создана тестовая 'последняя раздача' {room_id}")
 
     return {"ok": True, "room": room}
+
+
+@router.post("/clear_redis")
+async def clear_redis(redis_client: CustomRedis = Depends(get_redis)):
+    # Очищаем все ключи из Redis
+    await redis_client.flushdb()
+    return {"message": "Redis база данных очищена"}
