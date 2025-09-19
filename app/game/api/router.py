@@ -162,7 +162,11 @@ async def ready(req: ReadyRequest, redis=Depends(get_redis)):
 
 
 @router.post("/move")
-async def move(session: SessionDep, req: MoveRequest, redis: CustomRedis = Depends(get_redis)):
+async def move(
+    session: SessionDep,
+    req: MoveRequest,
+    redis: CustomRedis = Depends(get_redis)
+):
     """
     Обработка хода игрока.
     • Если поле пустое -> атака.
@@ -171,7 +175,8 @@ async def move(session: SessionDep, req: MoveRequest, redis: CustomRedis = Depen
         - определяем победителя раздачи,
         - начисляем очки,
         - очищаем поле,
-        - добираем карты по одной, пока у игроков не будет по 4.
+        - добор карт по одной, пока у игроков не будет по 4.
+        - проверка конца игры или пересдача
     """
     logger.info(f"[MOVE] room_id={req.room_id}, tg_id={req.tg_id}, cards={req.cards}")
 
@@ -203,10 +208,12 @@ async def move(session: SessionDep, req: MoveRequest, redis: CustomRedis = Depen
     # атака
     # ========================
     if field["attack"] is None:
-        # можно ходить только одной мастью или комбинацией
         suits = {c[1] for c in cards}
         if len(suits) != 1:
-            raise HTTPException(status_code=400, detail="Можно ходить только картами одной масти или комбинацией")
+            raise HTTPException(
+                status_code=400,
+                detail="Можно ходить только картами одной масти или комбинацией"
+            )
 
         for c in cards:
             hand.remove(list(c))
@@ -222,7 +229,10 @@ async def move(session: SessionDep, req: MoveRequest, redis: CustomRedis = Depen
     # ========================
     else:
         if str(req.tg_id) == attacker:
-            raise HTTPException(status_code=400, detail="Атакующий не может защищаться")
+            raise HTTPException(
+                status_code=400,
+                detail="Атакующий не может защищаться"
+            )
 
         atk_cards = [tuple(c) for c in field["attack"]["cards"]]
         if len(cards) != len(atk_cards):
@@ -233,18 +243,13 @@ async def move(session: SessionDep, req: MoveRequest, redis: CustomRedis = Depen
 
         beats_all = can_defend_all(atk_cards, cards, trump)
 
-        # убираем карты из руки
         for c in cards:
             hand.remove(list(c))
 
         field["defend"] = {"player": req.tg_id, "cards": [list(c) for c in cards]}
 
         # определяем победителя
-        if beats_all:
-            winner = req.tg_id
-        else:
-            winner = field["attack"]["player"]
-
+        winner = req.tg_id if beats_all else field["attack"]["player"]
         field["winner"] = winner
         logger.info(f"[MOVE] Победитель раздачи: {winner}")
 
@@ -256,9 +261,8 @@ async def move(session: SessionDep, req: MoveRequest, redis: CustomRedis = Depen
         # очищаем поле
         room["field"] = {"attack": None, "defend": None, "winner": None}
 
-        # добор карт по одной (по кругу)
+        # добор карт по одной (по кругу, пока у всех < 4)
         order = [str(winner)] + [pid for pid in players.keys() if pid != str(winner)]
-
         while deck and any(len(players[pid]["hand"]) < 4 for pid in order):
             for pid in order:
                 if deck and len(players[pid]["hand"]) < 4:
@@ -272,16 +276,31 @@ async def move(session: SessionDep, req: MoveRequest, redis: CustomRedis = Depen
         # ========================
         # проверка на конец игры
         # ========================
-        if any(len(p["hand"]) == 0 for p in players.values()):
+        if all(len(p["hand"]) == 0 for p in players.values()) and not deck:
             MAX_PENALTY = 12
-            scores = {pid: pdata["penalty"] for pid, pdata in players.items()}
 
-            # если кто-то достиг лимита → игра заканчивается
-            if any(score >= MAX_PENALTY for score in scores.values()):
+            scores_round = {pid: pdata["round_score"] for pid, pdata in players.items()}
+            max_score = max(scores_round.values())
+
+            for pid, score in scores_round.items():
+                if score == max_score:
+                    penalty = 0
+                elif score > 31:
+                    penalty = 2
+                elif score > 0:
+                    penalty = 4
+                else:  # score == 0
+                    penalty = 6
+
+                players[pid]["penalty"] += penalty
+                logger.info(f"[PENALTY] {pid} получил {penalty}, всего {players[pid]['penalty']}")
+
+            # проверяем лимит штрафов
+            if any(pdata["penalty"] >= MAX_PENALTY for pdata in players.values()):
                 from app.payments.dao import TransactionDAO
 
-                game_winner = min(scores, key=scores.get)
-                game_loser = max(scores, key=scores.get)
+                game_winner = min(players.keys(), key=lambda pid: players[pid]["penalty"])
+                game_loser = max(players.keys(), key=lambda pid: players[pid]["penalty"])
 
                 dao = TransactionDAO(session)
                 balances = await dao.apply_game_result(
@@ -305,7 +324,7 @@ async def move(session: SessionDep, req: MoveRequest, redis: CustomRedis = Depen
                     channel_name=f"room#{req.room_id}",
                 )
 
-                # сбрасываем комнату
+                # сброс комнаты
                 for pid, pdata in players.items():
                     pdata["hand"] = []
                     pdata["round_score"] = 0
@@ -316,19 +335,12 @@ async def move(session: SessionDep, req: MoveRequest, redis: CustomRedis = Depen
                 room["field"] = {"attack": None, "defend": None, "winner": None}
                 room["attacker"] = None
                 room["status"] = "waiting"
-                room["players"] = players
-
                 await redis.set(req.room_id, json.dumps(room))
 
-                return {
-                    "ok": True,
-                    "winner": game_winner,
-                    "loser": game_loser,
-                    "balances": balances,
-                    "message": "Игра завершена, комната сброшена в состояние ожидания",
-                }
+                return {"ok": True, "message": "Игра завершена", "balances": balances}
+
             else:
-                # штрафов мало → пересдаём колоду
+                # пересдаём новую партию
                 from app.game.core.constants import DECK
                 import random
 
@@ -336,10 +348,9 @@ async def move(session: SessionDep, req: MoveRequest, redis: CustomRedis = Depen
                 random.shuffle(deck)
 
                 for pid, pdata in players.items():
-                    hand = deck[:4]
+                    pdata["hand"] = deck[:4]
                     deck = deck[4:]
-                    pdata["hand"] = hand
-                    logger.debug(f"[RESHUFFLE] {pid} получил {hand}")
+                    pdata["round_score"] = 0  # сброс очков партии, penalty сохраняем
 
                 trump = deck[0][1]
                 room.update({
@@ -357,18 +368,18 @@ async def move(session: SessionDep, req: MoveRequest, redis: CustomRedis = Depen
                     channel_name=f"room#{req.room_id}",
                 )
 
-                return {"ok": True, "message": "Колода пересдана, игра продолжается", "room": room}
-        
-        # сохраняем обновления
+                return {"ok": True, "message": "Колода пересдана, новая партия", "room": room}
+
+    # сохраняем изменения
     players[str(req.tg_id)]["hand"] = hand
     room["players"] = players
     room["deck"] = deck
     await redis.set(req.room_id, json.dumps(room))
 
-    # уведомляем игроков
     await send_msg(event="move", payload={"room": room}, channel_name=f"room#{req.room_id}")
 
     return {"ok": True, "room": room}
+
 
 
 @router.post("/leave")
