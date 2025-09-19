@@ -702,3 +702,16 @@ async def clear_redis(redis_client: CustomRedis = Depends(get_redis)):
     # Очищаем все ключи из Redis
     await redis_client.flushdb()
     return {"message": "Redis база данных очищена"}
+
+
+@router.get("/room/{room_id}")
+async def current_room(
+     room_id: str, redis_client: CustomRedis = Depends(get_redis)
+):
+    # Получаем данные о комнате из Redis
+    room_data = await redis_client.get(room_id)
+    if not room_data:
+        raise HTTPException(status_code=404, detail="Комната не найдена")
+
+    room_info = json.loads(room_data)
+    return room_info
