@@ -379,9 +379,26 @@ async def move(
             while deck and any(len(players[pid]["hand"]) < 4 for pid in order):
                 for pid in order:
                     if deck and len(players[pid]["hand"]) < 4:
-                        card = deck.pop(0)
-                        players[pid]["hand"].append(card)
-                        logger.debug(f"[MOVE] Игрок {pid} добрал {card}")
+                        new_cards = []
+                        while deck and len(players[pid]["hand"]) < 4:
+                            card = deck.pop(0)
+                            players[pid]["hand"].append(card)
+                            new_cards.append(card)
+                            logger.debug(f"[MOVE] Игрок {pid} добрал {card}")
+
+                        # отправляем событие только с новыми картами
+                        if new_cards:
+                            # print(new_cards)
+                            await send_msg(
+                                event="hand",
+                                payload={
+                                    "new_cards": new_cards,
+                                    "trump": trump,
+                                    "deck_count": len(deck),
+                                    "attacker": room["attacker"],
+                                },
+                                channel_name=f"user#{pid}",
+                            )
 
             room["attacker"] = winner
     # сохраняем изменения
