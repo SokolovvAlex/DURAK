@@ -220,7 +220,7 @@ async def move(
         for c in cards:
             hand.remove(list(c))
 
-        field["attack"] = {"player": req.tg_id, "cards": [list(c) for c in cards]}
+        field["attack"] = {"player": str(req.tg_id), "cards": [list(c) for c in cards]}
         field["defend"] = None
         field["winner"] = None
 
@@ -254,10 +254,10 @@ async def move(
         for c in cards:
             hand.remove(list(c))
 
-        field["defend"] = {"player": req.tg_id, "cards": [list(c) for c in cards]}
+        field["defend"] = {"player": str(req.tg_id), "cards": [list(c) for c in cards]}
 
         # определяем победителя
-        winner = req.tg_id if beats_all else field["attack"]["player"]
+        winner = str(req.tg_id) if beats_all else field["attack"]["player"]
         field["winner"] = winner
 
         # обновляем последний ход
@@ -276,8 +276,8 @@ async def move(
         # очищаем поле
         room["field"] = {"attack": None, "defend": None, "winner": None}
 
-        print(deck)
-        print(all(len(p["hand"]) == 0 for p in players.values()))
+        # print(deck)
+        # print(all(len(p["hand"]) == 0 for p in players.values()))
 
         if not deck and all(len(p["hand"]) == 0 for p in players.values()):
             MAX_PENALTY = 12
@@ -298,7 +298,7 @@ async def move(
                 players[pid]["penalty"] += penalty
                 logger.info(f"[PENALTY] {pid} получил {penalty}, всего {players[pid]['penalty']}")
 
-            print(any(pdata["penalty"] >= MAX_PENALTY for pdata in players.values()))
+            # print(any(pdata["penalty"] >= MAX_PENALTY for pdata in players.values()))
             # проверяем лимит штрафов
             if any(pdata["penalty"] >= MAX_PENALTY for pdata in players.values()):
                 game_winner = min(players.keys(), key=lambda pid: players[pid]["penalty"])
