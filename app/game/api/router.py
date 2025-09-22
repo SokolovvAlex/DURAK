@@ -280,7 +280,7 @@ async def move(
         # print(all(len(p["hand"]) == 0 for p in players.values()))
 
         if not deck and all(len(p["hand"]) == 0 for p in players.values()):
-            MAX_PENALTY = 12
+            MAX_PENALTY = 2
             scores_round = {pid: pdata["round_score"] for pid, pdata in players.items()}
             max_score = max(scores_round.values())
 
