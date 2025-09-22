@@ -376,31 +376,34 @@ async def move(
             # ========================
         else:
             order = [winner] + [pid for pid in players.keys() if pid != winner]
+
+            # будем накапливать новые карты для каждого игрока
+            new_cards_by_player = {pid: [] for pid in order}
+
+            # раздаём карты по одной за круг
             while deck and any(len(players[pid]["hand"]) < 4 for pid in order):
                 for pid in order:
                     if deck and len(players[pid]["hand"]) < 4:
-                        new_cards = []
-                        while deck and len(players[pid]["hand"]) < 4:
-                            card = deck.pop(0)
-                            players[pid]["hand"].append(card)
-                            new_cards.append(card)
-                            logger.debug(f"[MOVE] Игрок {pid} добрал {card}")
+                        card = deck.pop(0)
+                        players[pid]["hand"].append(card)
+                        new_cards_by_player[pid].append(card)
+                        logger.debug(f"[MOVE] Игрок {pid} добрал {card}")
 
-                        # отправляем событие только с новыми картами
-                        if new_cards:
-                            # print(new_cards)
-                            await send_msg(
-                                event="hand",
-                                payload={
-                                    "new_cards": new_cards,
-                                    "trump": trump,
-                                    "deck_count": len(deck),
-                                    "attacker": room["attacker"],
-                                },
-                                channel_name=f"user#{pid}",
-                            )
+            # теперь отправляем уведомления только один раз для каждого игрока
+            for pid, new_cards in new_cards_by_player.items():
+                if new_cards:  # если реально были выданы карты
+                    await send_msg(
+                        event="hand",
+                        payload={
+                            "new_cards": new_cards,
+                            "trump": trump,
+                            "deck_count": len(deck),
+                            "attacker": room["attacker"],
+                        },
+                        channel_name=f"user#{pid}",
+                    )
 
-            room["attacker"] = winner
+        room["attacker"] = winner
     # сохраняем изменения
     players[str(req.tg_id)]["hand"] = hand
     room["players"] = players
@@ -637,7 +640,7 @@ async def create_test_room(redis: CustomRedis = Depends(get_redis)):
                 "penalty": 0
             }
         },
-        "deck": [["A","♦"],["K","♥"],["Q","♣"],["9","♠"]],
+        "deck": [["A","♦"],["K","♥"]],
         "trump": trump,
         "field": {"attack": None, "defend": None, "winner": None},
         "last_turn": {"attack": None, "defend": None},
