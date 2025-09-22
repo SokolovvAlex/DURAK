@@ -62,6 +62,12 @@ async def find_players(
         room["status"] = "matched"
         await redis.set(room_id, json.dumps(room))
 
+        await send_msg(
+            event="close_room",
+            payload={"room_id": req.room_id},
+            channel_name="rooms"
+        )
+
         opponent = next(
             p["nickname"] for uid, p in room["players"].items() if int(uid) != req.tg_id
         )
@@ -91,6 +97,15 @@ async def find_players(
     }
     await redis.set(room_id, json.dumps(room_data))
     logger.info(f"Создана новая комната {room_id} пользователем {req.tg_id}")
+
+    # после создания новой комнаты
+    await send_msg(
+        "new_room",
+        {
+            "room": room_data
+        },
+        channel_name="rooms",  # общий канал для всех игроков
+    )
 
     return FindPartnerResponse(
         room_id=room_id,
@@ -461,6 +476,12 @@ async def leave(
             room["players"] = players
             room["status"] = "waiting"
             await redis.set(req.room_id, json.dumps(room))
+
+            await send_msg(
+                "new_room",
+                {"room": room},
+                channel_name="rooms",
+            )
         else:
             # если игроков нет → очищаем комнату
             room.update({
@@ -472,6 +493,11 @@ async def leave(
                 "players": players
             })
             await redis.set(req.room_id, json.dumps(room))
+            await send_msg(
+                "close_room",
+                {"room_id": req.room_id},
+                channel_name="rooms",
+            )
 
         return {"ok": True, "message": "Игрок вышел из комнаты"}
 
@@ -518,6 +544,12 @@ async def leave(
         room["players"] = players
 
         await redis.set(req.room_id, json.dumps(room))
+
+        await send_msg(
+            "close_room",
+            {"room_id": req.room_id},
+            channel_name="rooms",
+        )
 
         return {
             "ok": True,
@@ -599,6 +631,12 @@ async def join_room(
 
     await redis.set(room_id, json.dumps(room))
 
+    await send_msg(
+        event="close_room",
+        payload={"room_id": room_id},
+        channel_name="rooms"
+    )
+
     # Уведомляем игроков через Centrifugo
     await send_msg(
         "player_joined",
@@ -628,6 +666,12 @@ async def list_rooms(redis: CustomRedis = Depends(get_redis)):
 async def clear_room(room_id: str, redis_client: CustomRedis = Depends(get_redis)):
     # Асинхронно удаляем ключ, связанный с room_id
     await redis_client.unlink(room_id)
+
+    await send_msg(
+        event="close_room",
+        payload={"room_id": room_id},
+        channel_name="rooms"
+    )
     return {"status": "ok", "message": f"Ключ для комнаты {room_id} удален"}
 
 
