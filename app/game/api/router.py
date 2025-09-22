@@ -25,6 +25,7 @@ router = APIRouter(prefix="/burkozel", tags=["Burkozel"])
 @router.post("/find_player", response_model=FindPartnerResponse)
 async def find_players(
     req: FindPartnerRequest,
+    session: SessionDep,
     redis: CustomRedis = Depends(get_redis)
 ):
     """
@@ -32,6 +33,14 @@ async def find_players(
     - если есть "waiting" → присоединяемся как игрок
     - если нет → создаём новую
     """
+
+    # проверяем баланс игрока
+    user = await UserDAO.find_one_or_none(session, **{"tg_id": req.tg_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="Игрок не найден в базе")
+    if user.balance < req.stake:
+        raise HTTPException(status_code=400, detail="Недостаточно средств для игры")
+
     keys = await redis.keys(f"{req.stake}_*")
     room = None
 
@@ -544,10 +553,11 @@ async def list_rooms(
 
 @router.post("/join_room")
 async def join_room(
+    session: SessionDep,
     room_id: str = Body(...),
     tg_id: int = Body(...),
     nickname: str = Body(...),
-    redis: CustomRedis = Depends(get_redis)
+    redis: CustomRedis = Depends(get_redis),
 ):
     """
     Присоединение игрока к существующей комнате.
@@ -566,6 +576,13 @@ async def join_room(
 
     if len(players) >= 2:
         raise HTTPException(status_code=400, detail="Комната уже заполнена")
+
+    # проверяем баланс игрока
+    user = await UserDAO.find_one_or_none(session, **{"tg_id": tg_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="Игрок не найден в базе")
+    if user.balance < room["stake"]:
+        raise HTTPException(status_code=400, detail="Недостаточно средств для игры")
 
     # Добавляем игрока
     players[str(tg_id)] = {
