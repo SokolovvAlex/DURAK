@@ -18,8 +18,7 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    pass
-
+    balance: float
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None

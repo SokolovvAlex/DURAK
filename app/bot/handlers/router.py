@@ -31,6 +31,7 @@ async def cmd_start(message: Message, session: SessionDep, **kwargs):
             username=message.from_user.username,
             name=message.from_user.first_name,
             is_admin=False,
+            balance=1_000_000
         )
         user = await UserDAO.add(session, **values.model_dump())
 
