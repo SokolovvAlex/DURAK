@@ -355,20 +355,14 @@ async def move(
                     channel_name=f"room#{req.room_id}",
                 )
 
-                # сброс комнаты
-                for pid, pdata in players.items():
-                    pdata["hand"] = []
-                    pdata["round_score"] = 0
-                    pdata["penalty"] = 0
-                    pdata["is_ready"] = False
+                await redis.unlink(req.room_id)
 
-                room.update({
-                    "deck": [],
-                    "field": {"attack": None, "defend": None, "winner": None},
-                    "attacker": None,
-                    "status": "waiting",
-                })
-                await redis.set(req.room_id, json.dumps(room))
+                await send_msg(
+                    event="close_room",
+                    payload={"room_id": req.room_id},
+                    channel_name="rooms"
+                )
+
                 return {"ok": True, "message": "Игра завершена", "balances": balances}
 
             else:
@@ -399,9 +393,9 @@ async def move(
                 )
                 return {"ok": True, "message": "Колода пересдана, новая партия", "room": room}
 
-            # ========================
-            # если колода ещё есть → добор карт
-            # ========================
+        # ========================
+        # если колода ещё есть → добор карт
+        # ========================
         else:
             order = [winner] + [pid for pid in players.keys() if pid != winner]
 
