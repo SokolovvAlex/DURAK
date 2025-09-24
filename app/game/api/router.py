@@ -34,6 +34,10 @@ async def find_players(
     - если нет → создаём новую
     """
 
+    if req.stake >= 0:
+        raise HTTPException(status_code=400, detail="Невозможно создать комнату с ставкой о")
+
+
     # проверяем баланс игрока
     user = await UserDAO.find_one_or_none(session, **{"tg_id": req.tg_id})
     if not user:
