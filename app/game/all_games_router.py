@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from loguru import logger
+from sqlalchemy import text
 
-from app.database import SessionDep
+from app.database import SessionDep, Base
 from app.game.dao import GameTypeDAO
 from app.game.game_schemas import GameTypeOut, CurrentGameOut
 
@@ -66,3 +67,31 @@ async def get_all_games(
         )
 
     return [GameTypeOut.model_validate(game) for game in games]
+
+@router.post("/clear_db")
+async def clear_db(session: SessionDep):
+    """
+    Полная очистка БД, кроме таблицы game_types.
+    Использует TRUNCATE CASCADE для быстрого удаления.
+    """
+    try:
+        # Получаем список всех таблиц
+        tables = Base.metadata.tables.keys()
+        excluded = {"game_types"}
+
+        # Фильтруем таблицы, кроме game_types
+        target_tables = [t for t in tables if t not in excluded]
+
+        logger.warning(f"[CLEAR_DB] Очистка таблиц: {target_tables}")
+
+        # Делаем truncate с cascade
+        for table in target_tables:
+            await session.execute(text(f'TRUNCATE TABLE "{table}" RESTART IDENTITY CASCADE;'))
+
+        await session.commit()
+        return {"status": "ok", "message": f"Очищены таблицы: {', '.join(target_tables)}"}
+
+    except Exception as e:
+        logger.error(f"[CLEAR_DB] Ошибка очистки: {e}")
+        await session.rollback()
+        raise HTTPException(status_code=500, detail=f"Ошибка очистки БД: {e}")
