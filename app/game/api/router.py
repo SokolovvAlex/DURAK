@@ -34,7 +34,7 @@ async def find_players(
     - если нет → создаём новую
     """
 
-    if req.stake >= 0:
+    if req.stake <= 0:
         raise HTTPException(status_code=400, detail="Невозможно создать комнату с ставкой о")
 
 
