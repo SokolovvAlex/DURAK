@@ -402,6 +402,14 @@ async def move(
             # будем накапливать новые карты для каждого игрока
             new_cards_by_player = {pid: [] for pid in order}
 
+            # сохраняем "старую руку" для каждого игрока (после хода, до добора)
+            old_hand_by_player: dict[str, list[list[str]]] = {
+                pid: [list(c) for c in players[pid]["hand"]]
+                for pid in order
+            }
+
+            # print(old_hand_by_player)
+
             # раздаём карты по одной за круг
             while deck and any(len(players[pid]["hand"]) < 4 for pid in order):
                 for pid in order:
@@ -411,12 +419,15 @@ async def move(
                         new_cards_by_player[pid].append(card)
                         logger.debug(f"[MOVE] Игрок {pid} добрал {card}")
 
+            # print(new_cards_by_player)
+
             # теперь отправляем уведомления только один раз для каждого игрока
             for pid, new_cards in new_cards_by_player.items():
                 if new_cards:  # если реально были выданы карты
                     await send_msg(
                         event="hand",
                         payload={
+                            "old_card_user": old_hand_by_player[pid],
                             "new_cards": new_cards,
                             "trump": trump,
                             "deck_count": len(deck),
