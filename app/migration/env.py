@@ -15,6 +15,7 @@ from app.database import Base
 from app.payments.models import PaymentTransaction
 from app.game.models import GameResult, GameType
 from app.users.models import User
+from app.friends.models import Friend
 
 config = context.config
 config.set_main_option("sqlalchemy.url", database_url)

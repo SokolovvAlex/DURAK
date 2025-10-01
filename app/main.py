@@ -16,6 +16,7 @@ from app.game.all_games_router import router as game_router
 from app.game.redis_dao.manager import redis_manager
 from app.users.router import router as user_router
 from app.payments.router import router as payments_router
+from app.friends.router import router as friend_router
 
 from fastapi.staticfiles import StaticFiles
 from aiogram.types import Update
@@ -70,6 +71,7 @@ app.include_router(burkozel_router)
 
 app.include_router(user_router)
 app.include_router(payments_router)
+app.include_router(friend_router)
 
 
 #ngrok http --url bursting-smart-eagle.ngrok-free.app 8080

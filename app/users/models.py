@@ -27,6 +27,21 @@ class User(Base):
     game_results = relationship("GameResult", back_populates="user", cascade="all, delete-orphan")
     transactions = relationship("PaymentTransaction", back_populates="user", cascade="all, delete-orphan")
 
+    # ✅ список всех друзей, которых пригласил пользователь
+    invited_friends = relationship(
+        "Friend",
+        foreign_keys="Friend.user_id",
+        back_populates="inviter",
+        cascade="all, delete-orphan"
+    )
+
+    # ✅ список записей, где этот юзер был приглашён
+    invited_by = relationship(
+        "Friend",
+        foreign_keys="Friend.friend_id",
+        back_populates="invited",
+        cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:
         return f"<User id={self.id} username={self.username!r} balance={self.balance}>"
