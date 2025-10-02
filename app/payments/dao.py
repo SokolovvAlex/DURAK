@@ -35,6 +35,33 @@ class PaymentTransactionDAO(BaseDAO):
             await session.rollback()
             raise e
 
+    @classmethod
+    async def create_transaction(
+            cls,
+            session: AsyncSession,
+            user_id: int,
+            tx_type,
+            amount: float,
+            status,
+    ) -> PaymentTransaction:
+        """
+        Создание транзакции для пользователя (без лишних зависимостей).
+        """
+        try:
+            tx = cls.model(
+                user_id=user_id,
+                type=tx_type,
+                amount=amount,
+                status=status,
+            )
+            session.add(tx)
+            await session.commit()  # сохраняем в БД
+            await session.refresh(tx)  # подтягиваем id и created_at
+            return tx
+        except SQLAlchemyError as e:
+            await session.rollback()
+            raise e
+
 
 class TransactionDAO:
     def __init__(self, session: AsyncSession):
