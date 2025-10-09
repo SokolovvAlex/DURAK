@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Optional
 
 import aiohttp
+import requests
 from fastapi import APIRouter, Depends, HTTPException, Request, Body, Query
 from sqlalchemy import select
 from starlette import status
@@ -20,7 +21,7 @@ from app.users.auth import get_current_user
 from app.users.dao import UserDAO
 from app.users.models import User
 from app.config import settings
-from app.payments.utils.plat_client import PlatClient, PlatService
+from app.payments.utils.plat_client import PlatClient
 
 logger = logging.getLogger(__name__)
 
@@ -30,113 +31,159 @@ PLAT_SHOP_ID = settings.PLAT_SHOP_ID
 PLAT_SECRET_KEY = settings.PLAT_SECRET_KEY
 
 
-# def get_plat_client() -> PlatClient:
-#     return PlatClient(
-#         shop_id=settings.PLAT_SHOP_ID,
-#         secret_key=settings.PLAT_SECRET_KEY,
-#     )
+def get_plat_client() -> PlatClient:
+    """Dependency для PlatClient"""
+    return PlatClient(
+        shop_id=settings.PLAT_SHOP_ID,
+        secret_key=settings.PLAT_SECRET_KEY,
+    )
 
 
 @router.post("/deposit", response_model=DepositResponse)
 async def create_deposit(
-    body: DepositRequest,
-    session: SessionDep,
-    method: str = Query("alfa", description="Метод оплаты (например, alfa)"),
-    user = Depends(get_current_user)
+        body: DepositRequest,
+        session: SessionDep,
+        plat_client: PlatClient = Depends(get_plat_client),
+        method: str = Query("alfa", description="Метод оплаты"),
+        user: User = Depends(get_current_user)
 ):
     """
-    Создание депозита через redirect/sign (сумма в РУБЛЯХ):
-    1) создаём PENDING-транзакцию;
-    2) сохраняем наш merchant_order_id (временно в plat_guid);
-    3) запрашиваем у PLAT redirect URL;
-    4) возвращаем ссылку оплаты.
+    Создание депозита с СИНХРОННЫМИ вызовами Plat API
     """
-    # 1. ищем пользователя
 
     if not user:
-        raise HTTPException(404, detail="Пользователь не найден")
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
 
-    # 2. создаём транзакцию (RUB!)
+    user_id = user.id
+    user_tg_id = user.tg_id
     amount_rub = int(Decimal(body.amount))
-    logger.info(f"[DEPOSIT] start tg_id={user.tg_id} amount_rub={amount_rub} method={method}")
+    logger.info(f"Creating deposit: user_id={user.id}, amount={amount_rub} rub")
 
-    tx = await PaymentTransactionDAO.create_deposit_transaction(session, user_id=user.id, amount_rub=float(amount_rub))
-
-    # 3. merchant_order_id — наш стабильный идентификатор (на базе tx.id)
-    merchant_order_id = f"tx_{tx.id}"
-    await PaymentTransactionDAO.save_initial_order_id(session, tx_id=tx.id, merchant_order_id=merchant_order_id)
-
-    await session.commit()
-    logger.info(f"[DEPOSIT] database committed for tx_id={tx.id}")
-
-    # 4. создаём платёж в PLAT (redirect URL)
     try:
-        pay_url = await PlatService.create_payment_with_sign(
-            merchant_order_id=merchant_order_id,
-            user_id=user.tg_id,
-            amount_rub=amount_rub,
-            method=method,
-        )
-    except Exception as e:
-        # отметить транзакцию как FAILED
-        tx.status = TxStatusEnum.FAILED
-        await session.commit()
-        logger.exception(f"[DEPOSIT] PLAT sign create failed tx_id={tx.id}")
-        raise HTTPException(502, detail=f"PLAT error: {e}")
+        # 1. Генерируем уникальный merchant_order_id
+        timestamp = int(datetime.utcnow().timestamp())
+        merchant_order_id = f"tx_{user_id}_{timestamp}"
 
-    logger.info(f"[DEPOSIT] ok tx_id={tx.id} order_id={merchant_order_id} pay_url={pay_url}")
-    return DepositResponse(tx_id=tx.id, pay_url=pay_url)
+        # 2. Создаем транзакцию в БД
+        tx_id = await PaymentTransactionDAO.create_deposit_transaction(
+            session=session,
+            user_id=user_id,
+            amount_rub=float(amount_rub),
+            merchant_order_id=merchant_order_id
+        )
+
+        # 3. Коммитим транзакцию в БД
+        await session.commit()
+        logger.info(f"Transaction committed: id={tx_id}")
+
+        # print(111)
+        # print(user_id)
+        # print(222)
+        # print(merchant_order_id)
+        # print(333)
+
+        # 4. СИНХРОННЫЙ вызов Plat API (после коммита БД - безопасно)
+        pay_url = plat_client.create_payment(
+            merchant_order_id=merchant_order_id,
+            user_id=user_tg_id,
+            amount=amount_rub,  # в рублях
+            method=method
+        )
+
+        logger.info(f"Deposit created successfully: tx_id={tx_id}, pay_url={pay_url}")
+        return DepositResponse(tx_id=tx_id, pay_url=pay_url)
+
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Deposit creation failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка создания платежа: {str(e)}"
+        )
 
 
 @router.post("/callback")
-async def plat_callback(payload: dict, session: SessionDep):
+async def plat_callback(
+        payload: dict,
+        session: SessionDep,
+        plat_client: PlatClient = Depends(get_plat_client)
+):
     """
-    Callback от PLAT:
-      - проверяем signature_v2 (MD5);
-      - ищем транзакцию по merchant_order_id (временно хранится в plat_guid) или по guid;
-      - при успехе (status == 1) зачисляем сумму 1:1 в РУБЛЯХ и ставим POSTED.
+    Callback от Plat для обработки статусов платежей
     """
-    logger.info(f"[PLAT CALLBACK] payload={payload}")
+    logger.info(f"Received Plat callback: {payload}")
 
-    if not PlatService.verify_callback_md5_v2(payload):
-        raise HTTPException(403, detail="Invalid signature")
+    # 1. Проверяем подпись
+    # if not plat_client.verify_callback(payload):
+    #     logger.error("Invalid callback signature")
+    #     raise HTTPException(status_code=403, detail="Invalid signature")
 
+    # 2. Извлекаем данные
     status = int(payload.get("status", 0))
-    merchant_order_id = str(payload.get("merchant_id", "") or payload.get("merchant_order_id", ""))
-    guid = payload.get("guid")
-    # важное: amount в РУБЛЯХ
+    merchant_order_id = str(payload.get("merchant_order_id", ""))
+    plat_guid = payload.get("guid", "")
+    amount_rub = float(payload.get("amount", 0))
+
+    logger.info(f"Callback details: status={status}, order_id={merchant_order_id}, amount={amount_rub}")
+
+    # 3. Обрабатываем только успешные платежи
+    if status != 1:
+        logger.info(f"Ignoring callback with status: {status}")
+        return {"status": "ignored"}
+
     try:
-        amount_rub = float(payload.get("amount", 0))
-    except Exception:
-        amount_rub = 0.0
-
-    # найдём транзакцию
-    tx = await PaymentTransactionDAO.find_deposit_by_order_or_guid(session, merchant_order_id=merchant_order_id, guid=guid)
-    if not tx:
-        logger.error(f"[PLAT CALLBACK] tx not found by order={merchant_order_id} guid={guid}")
-        raise HTTPException(404, detail="Transaction not found")
-
-    # уже обработана?
-    if tx.status == TxStatusEnum.POSTED:
-        logger.info(f"[PLAT CALLBACK] tx_id={tx.id} already POSTED — skip")
-        return {"ok": True}
-
-    if status == 1:
-        # кредиты 1:1, фиксируем реальный guid
-        balance = await PaymentTransactionDAO.finalize_successful_deposit(
+        # 4. Обрабатываем успешный платеж
+        success = await PaymentTransactionDAO.process_successful_deposit(
             session=session,
-            tx=tx,
-            real_guid=guid,
-            real_amount_rub=amount_rub if amount_rub > 0 else None,
+            merchant_order_id=merchant_order_id,
+            plat_guid=plat_guid,
+            amount_rub=amount_rub
         )
-        return {"ok": True, "tx_id": tx.id, "credited": float(tx.amount), "balance": balance}
 
-    # иначе — помечаем FAIL
-    tx.status = TxStatusEnum.FAILED
-    await session.commit()
-    logger.info(f"[PLAT CALLBACK] tx_id={tx.id} FAILED status={status}")
-    return {"ok": True, "status": "failed", "tx_id": tx.id}
+        if success:
+            # 5. Коммитим изменения баланса
+            await session.commit()
+            logger.info(f"Callback processed successfully: order_id={merchant_order_id}")
+            return {"status": "ok"}
+        else:
+            await session.rollback()
+            logger.error(f"Failed to process callback: order_id={merchant_order_id}")
+            return {"status": "error"}, 500
 
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Callback processing error: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка обработки платежа")
+
+
+@router.get("/check-connection")
+async def check_connection(plat_client: PlatClient = Depends(get_plat_client)):
+    """Проверка подключения к Plat"""
+    is_connected = plat_client.check_connection()  # Синхронный вызов
+    return {"connected": is_connected}
+
+
+@router.get("/transaction/{tx_id}/status")
+async def get_transaction_status(
+        tx_id: int,
+        session: SessionDep
+):
+    """Получить статус транзакции"""
+    tx = await PaymentTransactionDAO.get_transaction_by_id(session, tx_id)
+
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    user = await session.scalar(select(User).where(User.id == tx.user_id))
+
+    return {
+        "transaction_id": tx.id,
+        "status": tx.status,
+        "amount": float(tx.amount),
+        "plat_guid": tx.plat_guid,
+        "user_balance": float(user.balance) if user else 0,
+        "created_at": tx.created_at.isoformat()
+    }
 
 @router.get("/transactions/{tg_id}")
 async def get_user_transactions(

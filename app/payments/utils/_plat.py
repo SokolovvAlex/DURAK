@@ -47,7 +47,7 @@ async def test_sign_with_delays():
             }
 
             print(f"\n🔧 {i + 1}/{len(test_cases)}: {desc}")
-            print(f"   Method: {method}, Amount: {amount / 100} rub")
+            print(f"   Method: {method}, Amount: {amount} rub")
 
             async with aiohttp.ClientSession() as session:
                 async with session.post(

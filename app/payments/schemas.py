@@ -7,15 +7,8 @@ from enum import Enum
 from app.payments.models import TxStatusEnum, TxTypeEnum
 
 
-# ==== ЗАПРОСЫ ====
-
 class DepositRequest(BaseModel):
-    amount: Decimal = Field(..., gt=0, description="Сумма пополнения")
-
-
-class WithdrawRequest(BaseModel):
-    amount: Decimal = Field(..., gt=0, description="Сумма вывода")
-    card: str = Field(..., min_length=12, max_length=19, description="Номер карты/кошелька")
+    amount: Decimal = Field(..., gt=0, description="Сумма пополнения в рублях")
 
 
 class DepositResponse(BaseModel):
@@ -23,22 +16,18 @@ class DepositResponse(BaseModel):
     pay_url: str
 
 
-class WithdrawResponse(BaseModel):
-    tx_id: int
-    status: TxStatusEnum
-
-
-# ==== CALLBACK от PLAT ====
-
 class PlatCallback(BaseModel):
-    shop_id: str
-    order_id: str            # наш tx_id
+    signature: str
+    signature_v2: str
     payment_id: Optional[str] = None
-    payout_id: Optional[str] = None
-    amount: Decimal
-    status: str              # "success" / "failed"
-    time: int
-    sign: str
+    guid: str
+    merchant_order_id: str
+    user_id: str
+    status: int  # 0 - pending, 1 - success, etc.
+    amount: Decimal  # в рублях
+    amount_to_pay: Optional[Decimal] = None
+    amount_to_shop: Optional[Decimal] = None
+    expired: Optional[str] = None
 
 
 class TransactionOut(BaseModel):
@@ -46,10 +35,12 @@ class TransactionOut(BaseModel):
     type: TxTypeEnum
     amount: float
     status: TxStatusEnum
+    plat_guid: Optional[str]
     created_at: datetime
 
     class Config:
         from_attributes = True
+
 
 class TransactionStatsOut(BaseModel):
     total_transactions: int
@@ -58,6 +49,7 @@ class TransactionStatsOut(BaseModel):
     total_earned: float
     total_lost: float
     net_flow: float
+
 
 class UserTransactionsOut(BaseModel):
     transactions: List[TransactionOut]
