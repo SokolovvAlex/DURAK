@@ -41,6 +41,14 @@ class PaymentTransaction(Base):
         default=TxStatusEnum.PENDING,
         nullable=False
     )
+
+    plat_guid: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+        index=True,  # для быстрого поиска по GUID
+        comment="GUID платежа в системе Plat для отслеживания статусов"
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationship back to User
