@@ -16,7 +16,7 @@ from app.database import SessionDep
 from app.payments.dao import PaymentTransactionDAO, TransactionDAO
 from app.payments.models import TxStatusEnum, TxTypeEnum, PaymentTransaction
 from app.payments.schemas import TransactionStatsOut, UserTransactionsOut, TransactionOut, DepositResponse, \
-    DepositRequest
+    DepositRequest, WithdrawResponse, WithdrawRequest
 from app.users.auth import get_current_user
 from app.users.dao import UserDAO
 from app.users.models import User
@@ -154,6 +154,170 @@ async def plat_callback(
         await session.rollback()
         logger.error(f"Callback processing error: {e}")
         raise HTTPException(status_code=500, detail="Ошибка обработки платежа")
+
+
+@router.get("/withdraw/methods")
+async def get_withdraw_methods(
+        plat_client: PlatClient = Depends(get_plat_client)
+):
+    """
+    Получение доступных методов для вывода средств
+    """
+    try:
+        methods_data = plat_client.get_withdraw_methods()
+        return methods_data
+    except Exception as e:
+        logger.error(f"Failed to get withdraw methods: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка получения методов вывода")
+
+
+@router.post("/withdraw", response_model=WithdrawResponse)
+async def create_withdraw(
+        body: WithdrawRequest,
+        session: SessionDep,
+        plat_client: PlatClient = Depends(get_plat_client),
+        user: User = Depends(get_current_user)
+):
+    """
+    Создание заявки на вывод средств
+    """
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+    amount_rub = int(Decimal(body.amount))
+    logger.info(f"Creating withdraw: user_id={user.id}, amount={amount_rub}")
+
+    try:
+        # 1. Резервируем средства
+        await PaymentTransactionDAO.reserve_funds_for_withdraw(
+            session=session,
+            user_id=user.id,
+            amount_rub=float(amount_rub)
+        )
+
+        # 2. Генерируем уникальный merchant_id для выплаты
+        timestamp = int(datetime.utcnow().timestamp())
+        merchant_id = f"withdraw_{user.id}_{timestamp}"
+
+        # 3. Создаем выплату в Plat
+        # TODO: Нужно определить method_id для банковской карты
+        method_id = 4  # Заменить на реальный method_id из get_withdraw_methods()
+
+        withdraw_data = plat_client.create_withdraw(
+            merchant_id=merchant_id,
+            amount=amount_rub,
+            method_id=method_id,
+            purse=body.card_number,
+            bank=body.bank_name
+        )
+
+        plat_withdraw_id = str(withdraw_data['withdraw']['id'])
+
+        # 4. Создаем транзакцию вывода
+        tx_id = await PaymentTransactionDAO.create_withdraw_transaction(
+            session=session,
+            user_id=user.id,
+            amount_rub=float(amount_rub),
+            card_number=body.card_number,
+            plat_withdraw_id=plat_withdraw_id
+        )
+
+        # 5. Коммитим все изменения
+        await session.commit()
+
+        logger.info(f"Withdraw created successfully: tx_id={tx_id}, plat_withdraw_id={plat_withdraw_id}")
+        return WithdrawResponse(
+            withdraw_id=tx_id,
+            status=TxStatusEnum.PENDING,
+            message="Заявка на вывод создана"
+        )
+
+    except ValueError as e:
+        await session.rollback()
+        if "Insufficient funds" in str(e):
+            raise HTTPException(status_code=400, detail="Недостаточно средств")
+        else:
+            raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Withdraw creation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка создания вывода: {str(e)}")
+
+
+@router.post("/withdraw/callback")
+async def withdraw_callback(
+        payload: dict,
+        session: SessionDep,
+        plat_client: PlatClient = Depends(get_plat_client)
+):
+    """
+    Callback от Plat для обработки статусов выплат
+    """
+    logger.info(f"Received withdraw callback: {payload}")
+
+    # TODO: Добавить проверку подписи
+    # if not plat_client.verify_callback(payload):
+    #     raise HTTPException(status_code=403, detail="Invalid signature")
+
+    # Извлекаем данные
+    withdraw_id = str(payload.get("withdraw_id", ""))
+    status = int(payload.get("status", 0))
+
+    logger.info(f"Withdraw callback details: withdraw_id={withdraw_id}, status={status}")
+
+    try:
+        # Обрабатываем выплату
+        success = await PaymentTransactionDAO.process_successful_withdraw(
+            session=session,
+            plat_withdraw_id=withdraw_id,
+            status=status
+        )
+
+        if success:
+            await session.commit()
+            logger.info(f"Withdraw callback processed successfully: {withdraw_id}")
+            return {"status": "ok"}
+        else:
+            await session.rollback()
+            logger.error(f"Failed to process withdraw callback: {withdraw_id}")
+            return {"status": "error"}, 500
+
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Withdraw callback processing error: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка обработки выплаты")
+
+
+@router.get("/withdraw/{withdraw_id}/status")
+async def get_withdraw_status(
+        withdraw_id: int,
+        session: SessionDep,
+        plat_client: PlatClient = Depends(get_plat_client)
+):
+    """
+    Получение статуса вывода
+    """
+    tx = await PaymentTransactionDAO.get_transaction_by_id(session, withdraw_id)
+
+    if not tx or tx.type != TxTypeEnum.WITHDRAW:
+        raise HTTPException(status_code=404, detail="Withdraw not found")
+
+    # Если есть plat_withdraw_id, получаем актуальный статус из Plat
+    plat_status = None
+    if tx.plat_guid:
+        try:
+            withdraw_info = plat_client.get_withdraw_info(int(tx.plat_guid))
+            plat_status = withdraw_info['withdraw']['status']
+        except Exception as e:
+            logger.warning(f"Could not get Plat status: {e}")
+
+    return {
+        "withdraw_id": tx.id,
+        "status": tx.status,
+        "plat_status": plat_status,
+        "amount": float(abs(tx.amount)),  # абсолютное значение
+        "created_at": tx.created_at.isoformat()
+    }
 
 
 @router.get("/check-connection")

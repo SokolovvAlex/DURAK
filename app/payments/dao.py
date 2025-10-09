@@ -122,6 +122,107 @@ class PaymentTransactionDAO:
         result = await session.execute(stmt)
         return result.scalars().all()
 
+    @staticmethod
+    async def create_withdraw_transaction(
+            session: AsyncSession,
+            user_id: int,
+            amount_rub: float,
+            card_number: str,
+            plat_withdraw_id: Optional[str] = None
+    ) -> int:
+        """
+        Создает транзакцию вывода со статусом PENDING
+        Возвращает ID созданной транзакции
+        """
+        logger.info(f"Creating withdraw transaction: user_id={user_id}, amount={amount_rub}")
+
+        # Проверяем пользователя и баланс
+        user = await session.scalar(select(User).where(User.id == user_id))
+        if not user:
+            raise ValueError(f"User {user_id} not found")
+
+        # Проверяем достаточно ли средств
+        from decimal import Decimal
+        if user.balance < Decimal(str(amount_rub)):
+            raise ValueError("Insufficient funds")
+
+        # Создаем транзакцию
+        tx = PaymentTransaction(
+            user_id=user_id,
+            type=TxTypeEnum.WITHDRAW,
+            amount=-amount_rub,  # отрицательная сумма для вывода
+            status=TxStatusEnum.PENDING,
+            plat_guid=plat_withdraw_id,  # ID выплаты в Plat
+            created_at=datetime.utcnow(),
+        )
+
+        session.add(tx)
+        await session.flush()
+        tx_id = tx.id
+
+        logger.info(f"Withdraw transaction created: id={tx_id}")
+        return tx_id
+
+    @staticmethod
+    async def process_successful_withdraw(
+            session: AsyncSession,
+            plat_withdraw_id: str,
+            status: int
+    ) -> bool:
+        """
+        Обрабатывает callback выплаты от Plat
+        """
+        logger.info(f"Processing withdraw callback: withdraw_id={plat_withdraw_id}, status={status}")
+
+        # Ищем транзакцию по plat_withdraw_id
+        tx = await session.scalar(
+            select(PaymentTransaction).where(PaymentTransaction.plat_guid == plat_withdraw_id)
+        )
+
+        if not tx:
+            logger.error(f"Withdraw transaction not found: {plat_withdraw_id}")
+            return False
+
+        # Определяем статус based on Plat status codes
+        if status == 2:  # успешно выполнен
+            tx.status = TxStatusEnum.POSTED
+            logger.info(f"Withdraw completed successfully: {tx.id}")
+        elif status in [-3, -2, -1]:  # отменен
+            tx.status = TxStatusEnum.FAILED
+            # Возвращаем средства на баланс
+            user = await session.scalar(select(User).where(User.id == tx.user_id))
+            if user:
+                from decimal import Decimal
+                user.balance += Decimal(str(abs(tx.amount)))  # возвращаем абсолютное значение
+            logger.info(f"Withdraw cancelled: {tx.id}")
+        elif status in [0, 1]:  # в ожидании/процессе
+            logger.info(f"Withdraw still processing: {tx.id}")
+            return True  # ничего не меняем
+
+        return True
+
+    @staticmethod
+    async def reserve_funds_for_withdraw(
+            session: AsyncSession,
+            user_id: int,
+            amount_rub: float
+    ) -> bool:
+        """
+        Резервирует средства для вывода (списывает с баланса)
+        """
+        user = await session.scalar(select(User).where(User.id == user_id))
+        if not user:
+            raise ValueError(f"User {user_id} not found")
+
+        from decimal import Decimal
+        if user.balance < Decimal(str(amount_rub)):
+            raise ValueError("Insufficient funds")
+
+        # Списываем средства
+        user.balance -= Decimal(str(amount_rub))
+        logger.info(f"Funds reserved: user_id={user_id}, amount={amount_rub}")
+        return True
+
 
 class TransactionDAO:
     def __init__(self, session: AsyncSession):

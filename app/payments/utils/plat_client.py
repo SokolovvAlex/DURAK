@@ -1,7 +1,7 @@
 import aiohttp
 import hashlib
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 import requests
 
@@ -171,3 +171,133 @@ class PlatClient:
         except Exception as e:
             logger.error(f"Callback verification error: {e}")
             return False
+
+    def create_withdraw(
+            self,
+            merchant_id: str,
+            amount: int,  # в рублях
+            method_id: int,
+            purse: str,
+            bank: Optional[str] = None,
+            token: Optional[str] = None,
+            commission_payment: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Создание выплаты средств
+
+        Docs: /api/merchant/withdraw/shop/create/by-api
+
+        Status:
+        -3 - отменен мерчантом
+        -2 - отменен администратором
+        -1 - отменен пользователем
+        0 - в ожидании
+        1 - в процессе выплаты
+        2 - успешно выполнен
+        """
+        endpoint = "/api/merchant/withdraw/shop/create/by-api"
+        url = f"{self.BASE_URL}{endpoint}"
+
+        payload = {
+            "amount": float(amount),
+            "method_id": method_id,
+            "merchant_id": merchant_id,
+            "purse": purse,
+            "commission_payment": commission_payment
+        }
+
+        # Опциональные поля
+        if bank:
+            payload["bank"] = bank
+        if token:
+            payload["token"] = token
+
+        headers = {
+            "x-shop": self.shop_id,
+            "x-secret": self.secret_key,
+            "Content-Type": "application/json",
+        }
+
+        logger.info(f"Creating withdraw: amount={amount}, method_id={method_id}, purse={purse}")
+
+        try:
+            response = requests.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=30
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("success"):
+                    logger.info(f"Withdraw created successfully: {data['withdraw']}")
+                    return data
+                else:
+                    raise RuntimeError(f"Plat withdraw error: {data}")
+            else:
+                raise RuntimeError(f"Plat API error. Status: {response.status_code}")
+
+        except Exception as e:
+            logger.error(f"Failed to create withdraw: {e}")
+            raise
+
+    def get_withdraw_info(self, withdraw_id: int) -> Dict[str, Any]:
+        """
+        Получение информации о выплате
+
+        Docs: /api/merchant/shop/withdraw/info/{id}/by-api
+        """
+        endpoint = f"/api/merchant/shop/withdraw/info/{withdraw_id}/by-api"
+        url = f"{self.BASE_URL}{endpoint}"
+
+        headers = {
+            "x-shop": self.shop_id,
+            "x-secret": self.secret_key,
+        }
+
+        logger.debug(f"Getting withdraw info: id={withdraw_id}")
+
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("success"):
+                    return data
+                else:
+                    raise RuntimeError(f"Plat API error: {data}")
+            else:
+                raise RuntimeError(f"Plat API error. Status: {response.status_code}")
+        except Exception as e:
+            logger.error(f"Failed to get withdraw info: {e}")
+            raise
+
+    def get_withdraw_methods(self) -> Dict[str, Any]:
+        """
+        Получение доступных методов для выплат
+
+        Docs: /api/merchant/payments/methods/by-api
+        """
+        endpoint = "/api/merchant/payments/methods/by-api"
+        url = f"{self.BASE_URL}{endpoint}"
+
+        headers = {
+            "x-shop": self.shop_id,
+            "x-secret": self.secret_key,
+        }
+
+        logger.debug("Getting withdraw methods")
+
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("success"):
+                    return data
+                else:
+                    raise RuntimeError(f"Plat API error: {data}")
+            else:
+                raise RuntimeError(f"Plat API error. Status: {response.status_code}")
+        except Exception as e:
+            logger.error(f"Failed to get withdraw methods: {e}")
+            raise

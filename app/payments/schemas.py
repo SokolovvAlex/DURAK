@@ -54,3 +54,31 @@ class TransactionStatsOut(BaseModel):
 class UserTransactionsOut(BaseModel):
     transactions: List[TransactionOut]
     stats: TransactionStatsOut
+
+
+class WithdrawRequest(BaseModel):
+    amount: Decimal = Field(..., gt=0, description="Сумма вывода в рублях")
+    card_number: str = Field(..., min_length=16, max_length=19, description="Номер карты")
+    bank_name: Optional[str] = Field(None, description="Название банка (для СБП)")
+
+
+class WithdrawResponse(BaseModel):
+    withdraw_id: int
+    status: TxStatusEnum
+    message: Optional[str] = None
+
+
+class WithdrawCallback(BaseModel):
+    signature: str
+    signature_v2: str
+    withdraw_id: str
+    shop_id: str
+    user_id: str
+    merchant_id: str
+    method_id: int
+    method_name: str
+    amount: Decimal
+    amount_to_pay: Decimal
+    status: int  # -3, -2, -1, 0, 1, 2
+    purse: str  # реквизиты вывода
+    note: Optional[dict] = None
