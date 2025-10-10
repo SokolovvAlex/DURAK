@@ -15,9 +15,10 @@ async def test_sign_with_delays():
     endpoint = "/api/merchant/order/sign/create/by-api"
 
     test_cases = [
-        {"method": "alfa", "amount": 100, "desc": "100 руб - стандарт"},
-        {"method": "alfa", "amount": 150, "desc": "150руб - нестандартная"},
-        {"method": "alfa", "amount": 300, "desc": "300 руб СБП"},
+        {"method": "alfa", "amount": 1000, "desc": "1000 руб - стандарт"},
+        {"method": "alfa", "amount": 1500, "desc": "1500руб - нестандартная"},
+        {"method": "alfa", "amount": 3000, "desc": "3000 руб СБП"},
+        {"method": "alfa", "amount": 5000, "desc": "5000 руб СБП"},
     ]
 
     print("=== ТЕСТ С ЗАДЕРЖКАМИ ===")

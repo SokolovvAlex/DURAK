@@ -43,7 +43,8 @@ class PaymentTransactionDAO:
             type=TxTypeEnum.DEPOSIT,
             amount=amount_rub,
             status=TxStatusEnum.PENDING,
-            plat_guid=merchant_order_id,  # временно храним merchant_order_id
+            merchant_order_id=merchant_order_id,  # сохраняем merchant_order_id
+            plat_guid=None,  # будет заполнен позже из callback
             created_at=datetime.utcnow(),
         )
 
@@ -71,7 +72,7 @@ class PaymentTransactionDAO:
 
         # Ищем транзакцию по merchant_order_id
         tx = await session.scalar(
-            select(PaymentTransaction).where(PaymentTransaction.plat_guid == merchant_order_id)
+            select(PaymentTransaction).where(PaymentTransaction.merchant_order_id  == merchant_order_id)
         )
 
         if not tx:
@@ -128,6 +129,7 @@ class PaymentTransactionDAO:
             user_id: int,
             amount_rub: float,
             card_number: str,
+            merchant_withdraw_id: str,
             plat_withdraw_id: Optional[str] = None
     ) -> int:
         """
@@ -152,7 +154,8 @@ class PaymentTransactionDAO:
             type=TxTypeEnum.WITHDRAW,
             amount=-amount_rub,  # отрицательная сумма для вывода
             status=TxStatusEnum.PENDING,
-            plat_guid=plat_withdraw_id,  # ID выплаты в Plat
+            merchant_order_id=merchant_withdraw_id,  # наш внутренний ID вывода
+            plat_withdraw_id=plat_withdraw_id,  # ID выплаты в Plat
             created_at=datetime.utcnow(),
         )
 
@@ -176,7 +179,8 @@ class PaymentTransactionDAO:
 
         # Ищем транзакцию по plat_withdraw_id
         tx = await session.scalar(
-            select(PaymentTransaction).where(PaymentTransaction.plat_guid == plat_withdraw_id)
+            select(PaymentTransaction)
+            .where(PaymentTransaction.plat_withdraw_id == plat_withdraw_id)
         )
 
         if not tx:

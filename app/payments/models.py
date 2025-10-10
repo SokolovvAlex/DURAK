@@ -42,11 +42,25 @@ class PaymentTransaction(Base):
         nullable=False
     )
 
+    merchant_order_id: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+        index=True,
+        comment="ID платежа на стороне мерчанта (наш внутренний ID)"
+    )
+
     plat_guid: Mapped[Optional[str]] = mapped_column(
         String(255),
         nullable=True,
         index=True,  # для быстрого поиска по GUID
         comment="GUID платежа в системе Plat для отслеживания статусов"
+    )
+
+    plat_withdraw_id: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+        index=True,
+        comment="ID выплаты в системе Plat (для выводов)"
     )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

@@ -1,114 +1,72 @@
-# test_withdraw.py
-import asyncio
-import os
-import sys
-
-# Добавляем путь к проекту
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from app.payments.utils.plat_client import PlatClient
-from app.config import settings
+# test_sbp_real_phone.py
+import requests
+import json
+from datetime import datetime, timezone
 
 
-async def test_withdraw_methods():
-    """Тестируем получение методов выплат"""
-    print("=== ТЕСТИРУЕМ МЕТОДЫ ВЫВОДА ===")
+def simple_withdraw_test_sbp_real():
+    """Тест вывода через СБП с реальным номером телефона"""
+    print("=== ТЕСТ ВЫВОДА ЧЕРЕЗ СБП (РЕАЛЬНЫЙ НОМЕР) ===")
 
-    client = PlatClient(
-        shop_id=settings.PLAT_SHOP_ID,
-        secret_key=settings.PLAT_SECRET_KEY
-    )
+    SHOP_ID = "825"
+    SECRET_KEY = "1112222"
+    BASE_URL = "https://1plat.cash"
 
-    try:
-        methods = client.get_withdraw_methods()
-        print("✅ Методы выплат получены:")
-        print(f"Успех: {methods.get('success')}")
+    # Замените на реальный номер телефона
+    REAL_PHONE = "+79785838651"  # ЗАМЕНИТЕ НА РЕАЛЬНЫЙ НОМЕР
 
-        if methods.get('methods'):
-            print("\n📋 Доступные методы:")
-            for method in methods['methods']:
-                print(f"  ID: {method.get('id')}, Название: {method.get('name')}, Лейбл: {method.get('label')}")
-                print(f"    Мин: {method.get('min')}, Макс: {method.get('max')}")
-                print(f"    Комиссия: {method.get('commission_percent')}% + {method.get('commission_fix')} руб")
-                print()
+    timestamp = int(datetime.now(timezone.utc).timestamp())
+    merchant_id = f"real_sbp_{timestamp}"
 
-        if methods.get('banks'):
-            print("🏦 Доступные банки:")
-            for bank_id, bank_name in methods['banks'].items():
-                print(f"  {bank_id}: {bank_name}")
+    payload = {
+        "amount": 100.0,
+        "method_id": 2,  # sbp
+        "merchant_id": merchant_id,
+        "purse": REAL_PHONE,
+        "bank": "Сбербанк",
+        "commission_payment": True
+    }
 
-    except Exception as e:
-        print(f"❌ Ошибка: {e}")
+    endpoint = "/api/merchant/withdraw/shop/create/by-api"
+    url = f"{BASE_URL}{endpoint}"
 
+    headers = {
+        "x-shop": SHOP_ID,
+        "x-secret": SECRET_KEY,
+        "Content-Type": "application/json",
+    }
 
-async def test_create_withdraw():
-    """Тестируем создание выплаты"""
-    print("\n=== ТЕСТИРУЕМ СОЗДАНИЕ ВЫВОДА ===")
-
-    client = PlatClient(
-        shop_id=settings.PLAT_SHOP_ID,
-        secret_key=settings.PLAT_SECRET_KEY
-    )
-
-    # Сначала получим методы
-    try:
-        methods = client.get_withdraw_methods()
-        if not methods.get('methods'):
-            print("❌ Нет доступных методов выплат")
-            return
-
-        # Берем первый доступный метод
-        method = methods['methods'][0]
-        print(f"Используем метод: {method['name']} (ID: {method['id']})")
-
-        # Тестовые данные
-        test_data = {
-            "merchant_id": f"test_withdraw_{int(asyncio.get_event_loop().time())}",
-            "amount": 100,  # Минимальная сумма
-            "method_id": method['id'],
-            "purse": "2200000000000000",  # Тестовый номер карты
-            "bank": "Сбербанк",  # Если требуется для метода
-            "commission_payment": True
-        }
-
-        print(f"Данные для выплаты: {test_data}")
-
-        # Пробуем создать выплату
-        result = client.create_withdraw(**test_data)
-        print("✅ Выплата создана успешно!")
-        print(f"Ответ: {result}")
-
-    except Exception as e:
-        print(f"❌ Ошибка создания выплаты: {e}")
-
-
-async def test_shop_info():
-    """Проверяем информацию о магазине"""
-    print("\n=== ИНФОРМАЦИЯ О МАГАЗИНЕ ===")
-
-    client = PlatClient(
-        shop_id=settings.PLAT_SHOP_ID,
-        secret_key=settings.PLAT_SECRET_KEY
-    )
+    print(f"🔄 Отправка запроса вывода на реальный номер...")
+    print(f"   Сумма: {payload['amount']} руб")
+    print(f"   Метод: СБП")
+    print(f"   Телефон: {payload['purse']}")
+    print(f"   Банк: {payload['bank']}")
 
     try:
-        # Используем существующий метод проверки подключения
-        is_connected = client.check_connection()
-        print(f"Подключение: {'✅ Успешно' if is_connected else '❌ Ошибка'}")
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+
+        print(f"📥 Ответ: {response.status_code}")
+
+        if response.status_code == 200:
+            data = response.json()
+            print("✅ Ответ:")
+            print(json.dumps(data, indent=2, ensure_ascii=False))
+
+            if data.get("success"):
+                print(f"\n🎯 Вывод создан! ID: {data['withdraw']['id']}")
+            else:
+                print("❌ Ошибка в ответе")
+        else:
+            print(f"📝 Response Text: {response.text}")
+            try:
+                error_data = response.json()
+                print(f"❌ Ошибка: {error_data.get('error', 'Unknown error')}")
+            except:
+                print(f"❌ Ошибка: {response.text}")
 
     except Exception as e:
-        print(f"❌ Ошибка подключения: {e}")
-
-
-async def main():
-    """Запускаем все тесты"""
-    print("🔧 ТЕСТИРОВАНИЕ ВЫВОДА СРЕДСТВ PLAT")
-    print(f"Shop ID: {settings.PLAT_SHOP_ID}")
-
-    await test_shop_info()
-    await test_withdraw_methods()
-    await test_create_withdraw()
+        print(f"💥 Исключение: {e}")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    simple_withdraw_test_sbp_real()

@@ -72,9 +72,7 @@ async def create_deposit(
             merchant_order_id=merchant_order_id
         )
 
-        # 3. Коммитим транзакцию в БД
-        await session.commit()
-        logger.info(f"Transaction committed: id={tx_id}")
+
 
         # print(111)
         # print(user_id)
@@ -89,6 +87,9 @@ async def create_deposit(
             amount=amount_rub,  # в рублях
             method=method
         )
+
+        await session.commit()
+        logger.info(f"Transaction committed: id={tx_id}")
 
         logger.info(f"Deposit created successfully: tx_id={tx_id}, pay_url={pay_url}")
         return DepositResponse(tx_id=tx_id, pay_url=pay_url)
@@ -114,13 +115,13 @@ async def plat_callback(
     logger.info(f"Received Plat callback: {payload}")
 
     # 1. Проверяем подпись
-    # if not plat_client.verify_callback(payload):
-    #     logger.error("Invalid callback signature")
-    #     raise HTTPException(status_code=403, detail="Invalid signature")
+    if not plat_client.verify_callback(payload):
+        logger.error("Invalid callback signature")
+        raise HTTPException(status_code=403, detail="Invalid signature")
 
     # 2. Извлекаем данные
     status = int(payload.get("status", 0))
-    merchant_order_id = str(payload.get("merchant_order_id", ""))
+    merchant_order_id = str(payload.get("merchant_id", ""))
     plat_guid = payload.get("guid", "")
     amount_rub = float(payload.get("amount", 0))
 

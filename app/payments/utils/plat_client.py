@@ -172,29 +172,18 @@ class PlatClient:
             logger.error(f"Callback verification error: {e}")
             return False
 
+
     def create_withdraw(
             self,
             merchant_id: str,
-            amount: int,  # в рублях
+            amount: int,
             method_id: int,
             purse: str,
             bank: Optional[str] = None,
             token: Optional[str] = None,
             commission_payment: bool = True
     ) -> Dict[str, Any]:
-        """
-        Создание выплаты средств
-
-        Docs: /api/merchant/withdraw/shop/create/by-api
-
-        Status:
-        -3 - отменен мерчантом
-        -2 - отменен администратором
-        -1 - отменен пользователем
-        0 - в ожидании
-        1 - в процессе выплаты
-        2 - успешно выполнен
-        """
+        """Создание выплаты средств"""
         endpoint = "/api/merchant/withdraw/shop/create/by-api"
         url = f"{self.BASE_URL}{endpoint}"
 
@@ -206,7 +195,6 @@ class PlatClient:
             "commission_payment": commission_payment
         }
 
-        # Опциональные поля
         if bank:
             payload["bank"] = bank
         if token:
@@ -218,9 +206,13 @@ class PlatClient:
             "Content-Type": "application/json",
         }
 
-        logger.info(f"Creating withdraw: amount={amount}, method_id={method_id}, purse={purse}")
+        logger.info(f"🔄 Creating withdraw request:")
+        logger.info(f"   URL: {url}")
+        logger.info(f"   Headers: {headers}")
+        logger.info(f"   Payload: {payload}")
 
         try:
+            import requests
             response = requests.post(
                 url,
                 json=payload,
@@ -228,19 +220,35 @@ class PlatClient:
                 timeout=30
             )
 
+            logger.info(f"📥 Withdraw response:")
+            logger.info(f"   Status: {response.status_code}")
+            logger.info(f"   Headers: {dict(response.headers)}")
+            logger.info(f"   Text: {response.text}")
+
             if response.status_code == 200:
                 data = response.json()
                 if data.get("success"):
-                    logger.info(f"Withdraw created successfully: {data['withdraw']}")
+                    logger.info(f"✅ Withdraw created successfully: {data}")
                     return data
                 else:
-                    raise RuntimeError(f"Plat withdraw error: {data}")
+                    error_msg = data.get('error', 'Unknown error')
+                    logger.error(f"❌ Plat withdraw error: {error_msg}")
+                    raise RuntimeError(f"Plat withdraw error: {error_msg}")
             else:
-                raise RuntimeError(f"Plat API error. Status: {response.status_code}")
+                # Детальный анализ ошибки
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get('error', response.text)
+                    logger.error(f"❌ Plat API error {response.status_code}: {error_msg}")
+                except:
+                    error_msg = response.text
+                    logger.error(f"❌ Plat API error {response.status_code}: {error_msg}")
+                raise RuntimeError(f"Plat API error {response.status_code}: {error_msg}")
 
-        except Exception as e:
-            logger.error(f"Failed to create withdraw: {e}")
-            raise
+        except requests.exceptions.RequestException as e:
+            logger.error(f"💥 Network error creating withdraw: {e}")
+            raise RuntimeError(f"Network error: {e}")
+
 
     def get_withdraw_info(self, withdraw_id: int) -> Dict[str, Any]:
         """
@@ -275,7 +283,6 @@ class PlatClient:
     def get_withdraw_methods(self) -> Dict[str, Any]:
         """
         Получение доступных методов для выплат
-
         Docs: /api/merchant/payments/methods/by-api
         """
         endpoint = "/api/merchant/payments/methods/by-api"
@@ -292,12 +299,61 @@ class PlatClient:
             response = requests.get(url, headers=headers, timeout=30)
             if response.status_code == 200:
                 data = response.json()
-                if data.get("success"):
-                    return data
-                else:
-                    raise RuntimeError(f"Plat API error: {data}")
+                logger.info(f"Withdraw methods response: {data}")
+
+                # Преобразуем формат systems в methods для совместимости
+                if data.get("success") and data.get("systems"):
+                    methods = []
+                    for system in data["systems"]:
+                        method = {
+                            "id": self._get_method_id(system["system_group"]),
+                            "name": system["system_group"],
+                            "label": self._get_method_label(system["system_group"]),
+                            "min": system["min"],
+                            "max": system["max"],
+                            "commission_fix": 0,  # Нужно уточнить у Plat
+                            "commission_percent": self._get_commission(system["system_group"])
+                        }
+                        methods.append(method)
+
+                    data["methods"] = methods
+
+                return data
             else:
                 raise RuntimeError(f"Plat API error. Status: {response.status_code}")
         except Exception as e:
             logger.error(f"Failed to get withdraw methods: {e}")
             raise
+
+    def _get_method_id(self, system_group: str) -> int:
+        """Маппинг system_group на числовые ID"""
+        mapping = {
+            "card": 1,
+            "sbp": 2,
+            "crypto": 3,
+            "alfa": 4,
+            "qr": 5
+        }
+        return mapping.get(system_group, 1)  # По умолчанию card
+
+    def _get_method_label(self, system_group: str) -> str:
+        """Получаем читаемое название метода"""
+        labels = {
+            "card": "Банковская карта",
+            "sbp": "СБП",
+            "crypto": "Криптовалюта",
+            "alfa": "Альфа-Банк",
+            "qr": "QR-код"
+        }
+        return labels.get(system_group, system_group)
+
+    def _get_commission(self, system_group: str) -> float:
+        """Получаем комиссию для метода (нужно уточнить у Plat)"""
+        commissions = {
+            "card": 2.0,
+            "sbp": 1.5,
+            "crypto": 3.0,
+            "alfa": 2.0,
+            "qr": 1.0
+        }
+        return commissions.get(system_group, 2.0)
