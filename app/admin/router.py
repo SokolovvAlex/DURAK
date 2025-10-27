@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Response, Query
+from fastapi import APIRouter, HTTPException, Depends, Response, Query, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import status
 from typing import Optional
@@ -10,10 +10,11 @@ from app.admin.schemas import (
     UserAdminOut, UserAdminUpdate
 )
 from app.admin.auth import get_password_hash, authenticate_user, create_access_token
-from app.admin.dependencies import get_current_admin_user
+from app.admin.dependencies import get_current_admin_user, get_current_super_admin
 from app.exception import IncorrectEmailOrPasswordException
 from app.users.dao import UserDAO
 from app.users.models import User
+from app.admin.dao import AdminDAO
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -21,11 +22,11 @@ router = APIRouter(prefix="/admin", tags=["Admin"])
 @router.post("/admins", response_model=AdminOut, status_code=201)
 async def create_admin(
     admin_data: AdminCreate,
-    session: SessionDep
+    session: SessionDep,
+    admin: User = Depends(get_current_super_admin),
 ):
     """
-    Создание нового администратора
-    Пока без проверок на права, так как реализуем по этапам.
+    Создание нового администратора (только для суперадминов)
     """
     try:
         new_admin = await AdminDAO.create_admin(
@@ -82,7 +83,7 @@ async def login(
         httponly=True,
         secure=True,  # Для продакшена должно быть True
         samesite="lax",
-        max_age=1800  # 30 минут
+        max_age=28800  # 8 часов (8 * 60 * 60)
     )
     
     return LoginResponse(
@@ -236,4 +237,84 @@ async def update_user(
         raise HTTPException(status_code=404, detail="Пользователь не найден")
     
     return UserAdminOut.model_validate(updated)
+
+
+# ============= Эндпоинты для управления администраторами =============
+
+
+@router.get("/admins", response_model=list[AdminOut], status_code=200)
+async def get_all_admins_list(
+    session: SessionDep,
+    admin: User = Depends(get_current_super_admin),
+):
+    """
+    Получить список всех администраторов (только для суперадминов)
+    """
+    admins = await AdminDAO.get_all_admins(session)
+    return [AdminOut.model_validate(adm) for adm in admins]
+
+
+@router.delete("/admins/{admin_id}", status_code=200)
+async def delete_admin(
+    admin_id: int,
+    session: SessionDep,
+    admin: User = Depends(get_current_super_admin),
+):
+    """
+    Удалить администратора (только для суперадминов)
+    """
+    # Находим администратора
+    admin_to_delete = await AdminDAO.find_admin_by_id(session, admin_id)
+    if not admin_to_delete:
+        raise HTTPException(status_code=404, detail="Администратор не найден")
+    
+    # Нельзя удалить самого себя
+    if admin_to_delete.id == admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Нельзя удалить самого себя"
+        )
+    
+    # Удаляем права администратора (становится обычным пользователем)
+    updated = await UserDAO.update(session, {"id": admin_id}, is_admin=False, is_super_admin=False)
+    
+    if not updated:
+        raise HTTPException(status_code=404, detail="Администратор не найден")
+    
+    return {"message": "Администратор успешно удален"}
+
+
+@router.patch("/admins/{admin_id}/permissions", response_model=AdminOut, status_code=200)
+async def change_admin_permissions(
+    admin_id: int,
+    is_super_admin: bool = Body(...),
+    session: SessionDep = None,
+    admin: User = Depends(get_current_super_admin),
+):
+    """
+    Изменить права администратора (сделать суперадмином или убрать статус)
+    """
+    # Находим администратора
+    admin_to_update = await AdminDAO.find_admin_by_id(session, admin_id)
+    if not admin_to_update:
+        raise HTTPException(status_code=404, detail="Администратор не найден")
+    
+    # Проверяем, что пользователь является администратором
+    if not admin_to_update.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Пользователь не является администратором"
+        )
+    
+    # Обновляем статус
+    updated = await UserDAO.update(
+        session, 
+        {"id": admin_id}, 
+        is_super_admin=is_super_admin
+    )
+    
+    if not updated:
+        raise HTTPException(status_code=404, detail="Администратор не найден")
+    
+    return AdminOut.model_validate(updated)
 

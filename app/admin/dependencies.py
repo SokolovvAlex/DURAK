@@ -33,14 +33,6 @@ async def get_current_user(session: SessionDep, token: str = Depends(get_token))
         logger.error(f"JWT decode error: {e}")
         raise IncorrectFormatTokenException
 
-    expire = payload.get('exp')
-    current_time = datetime.utcnow().timestamp()
-    logger.info(f"Token expire: {expire}, current time: {current_time}")
-    
-    if (not expire) or (float(expire) < current_time):
-        logger.error("Token expired")
-        raise TokenExpireException
-
     user_id = payload.get('sub')
     if not user_id:
         logger.error("No user_id in token")
