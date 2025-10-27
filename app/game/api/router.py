@@ -308,7 +308,7 @@ async def move(
         # print(all(len(p["hand"]) == 0 for p in players.values()))
 
         if not deck and all(len(p["hand"]) == 0 for p in players.values()):
-            MAX_PENALTY = 2
+            MAX_PENALTY = 12
             scores_round = {pid: pdata["round_score"] for pid, pdata in players.items()}
             max_score = max(scores_round.values())
 
@@ -331,6 +331,8 @@ async def move(
             if any(pdata["penalty"] >= MAX_PENALTY for pdata in players.values()):
                 game_winner = min(players.keys(), key=lambda pid: players[pid]["penalty"])
                 game_loser = max(players.keys(), key=lambda pid: players[pid]["penalty"])
+                print(game_loser)
+                # game_loser = 12
 
                 dao = TransactionDAO(session)
                 balances = await dao.apply_game_result(
@@ -341,6 +343,9 @@ async def move(
                 await session.commit()
 
                 logger.info(f"[GAME_OVER] Победитель {game_winner}, проигравший {game_loser}")
+
+                balances["winner_result"] = players[game_winner]["penalty"]  # Штрафы победителя
+                balances["loser_result"] = 12  # Всегда 12 у проигравшего
 
                 await send_msg(
                     event="game_over",

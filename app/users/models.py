@@ -12,11 +12,14 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True, autoincrement=True)
-    tg_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
+    tg_id: Mapped[Optional[int]] = mapped_column(BigInteger, unique=True, nullable=True, index=True)
     username: Mapped[Optional[str]] = mapped_column(String(255), unique=True, nullable=True)
     name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     balance: Mapped[float] = mapped_column(Numeric(10, 2), default=0.00, nullable=False)
+
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_super_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

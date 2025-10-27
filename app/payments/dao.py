@@ -1,8 +1,9 @@
 import logging
 from datetime import datetime
+from operator import or_
 from typing import List, Optional
 
-from sqlalchemy import select, func, case
+from sqlalchemy import select, func, case, and_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -128,13 +129,13 @@ class PaymentTransactionDAO:
             session: AsyncSession,
             user_id: int,
             amount_rub: float,
-            card_number: str,
-            merchant_withdraw_id: str,
-            plat_withdraw_id: Optional[str] = None
-    ) -> int:
+            method_id: int,
+            purse: str,
+            bank_id: Optional[str] = None
+    ) -> tuple[int, str]:
         """
-        Создает транзакцию вывода со статусом PENDING
-        Возвращает ID созданной транзакции
+        Создает транзакцию вывода и резервирует средства
+        Возвращает (tx_id, merchant_id)
         """
         logger.info(f"Creating withdraw transaction: user_id={user_id}, amount={amount_rub}")
 
@@ -148,14 +149,21 @@ class PaymentTransactionDAO:
         if user.balance < Decimal(str(amount_rub)):
             raise ValueError("Insufficient funds")
 
+        # Резервируем средства (списываем с баланса)
+        user.balance -= Decimal(str(amount_rub))
+
+        # Генерируем merchant_id
+        timestamp = int(datetime.utcnow().timestamp())
+        merchant_id = f"withdraw_{user_id}_{timestamp}"
+
         # Создаем транзакцию
         tx = PaymentTransaction(
             user_id=user_id,
             type=TxTypeEnum.WITHDRAW,
-            amount=-amount_rub,  # отрицательная сумма для вывода
+            amount=-amount_rub,
             status=TxStatusEnum.PENDING,
-            merchant_order_id=merchant_withdraw_id,  # наш внутренний ID вывода
-            plat_withdraw_id=plat_withdraw_id,  # ID выплаты в Plat
+            merchant_order_id=merchant_id,  # сохраняем как merchant_order_id для поиска
+            plat_withdraw_id=None,  # будет заполнен из ответа Plat
             created_at=datetime.utcnow(),
         )
 
@@ -163,46 +171,66 @@ class PaymentTransactionDAO:
         await session.flush()
         tx_id = tx.id
 
-        logger.info(f"Withdraw transaction created: id={tx_id}")
-        return tx_id
+        logger.info(f"Withdraw transaction created: id={tx_id}, merchant_id={merchant_id}")
+        return tx_id, merchant_id
 
     @staticmethod
-    async def process_successful_withdraw(
+    async def process_withdraw_callback(
             session: AsyncSession,
+            merchant_id: str,
             plat_withdraw_id: str,
             status: int
     ) -> bool:
         """
-        Обрабатывает callback выплаты от Plat
+        Обрабатывает callback выплаты от Plat по merchant_id
+        Проверяет что транзакция в статусе PENDING
         """
-        logger.info(f"Processing withdraw callback: withdraw_id={plat_withdraw_id}, status={status}")
+        logger.info(f"Processing withdraw callback: merchant_id={merchant_id}, status={status}")
 
-        # Ищем транзакцию по plat_withdraw_id
+        # Ищем транзакцию по merchant_order_id (это наш merchant_id)
         tx = await session.scalar(
-            select(PaymentTransaction)
-            .where(PaymentTransaction.plat_withdraw_id == plat_withdraw_id)
+            select(PaymentTransaction).where(PaymentTransaction.merchant_order_id == merchant_id)
         )
 
         if not tx:
-            logger.error(f"Withdraw transaction not found: {plat_withdraw_id}")
+            logger.error(f"Withdraw transaction not found: {merchant_id}")
             return False
 
-        # Определяем статус based on Plat status codes
+        # ПРОВЕРКА СТАТУСА: если транзакция уже не в PENDING - игнорируем
+        if tx.status != TxStatusEnum.PENDING:
+            logger.warning(
+                f"Withdraw transaction already processed: id={tx.id}, "
+                f"current_status={tx.status}, requested_status={status}. Ignoring callback."
+            )
+            return True  # Возвращаем True, но ничего не меняем
+
+        # Находим пользователя
+        user = await session.scalar(select(User).where(User.id == tx.user_id))
+        if not user:
+            logger.error(f"User not found for transaction: {tx.id}")
+            return False
+
+        # Обновляем plat_withdraw_id если его еще нет
+        if not tx.plat_withdraw_id:
+            tx.plat_withdraw_id = plat_withdraw_id
+
+        # Обрабатываем статусы Plat
         if status == 2:  # успешно выполнен
             tx.status = TxStatusEnum.POSTED
             logger.info(f"Withdraw completed successfully: {tx.id}")
+
         elif status in [-3, -2, -1]:  # отменен
             tx.status = TxStatusEnum.FAILED
             # Возвращаем средства на баланс
-            user = await session.scalar(select(User).where(User.id == tx.user_id))
-            if user:
-                from decimal import Decimal
-                user.balance += Decimal(str(abs(tx.amount)))  # возвращаем абсолютное значение
-            logger.info(f"Withdraw cancelled: {tx.id}")
+            from decimal import Decimal
+            user.balance += Decimal(str(abs(tx.amount)))
+            logger.info(f"Withdraw cancelled, funds returned: {tx.id}")
+
         elif status in [0, 1]:  # в ожидании/процессе
             logger.info(f"Withdraw still processing: {tx.id}")
             return True  # ничего не меняем
 
+        logger.info(f"Withdraw status updated: tx_id={tx.id}, old_status=PENDING, new_status={tx.status}")
         return True
 
     @staticmethod
@@ -296,7 +324,18 @@ class TransactionDAO:
         stmt = (
             select(PaymentTransaction)
             .join(User, PaymentTransaction.user_id == User.id)
-            .where(User.tg_id == tg_id)
+            .where(
+                User.tg_id == tg_id,
+                # Для транзакций DEPOSIT и WITHDRAW показываем только POSTED
+                # Для остальных типов транзакций показываем все статусы
+                or_(
+                    and_(
+                        PaymentTransaction.type.in_([TxTypeEnum.DEPOSIT, TxTypeEnum.WITHDRAW]),
+                        PaymentTransaction.status == TxStatusEnum.POSTED
+                    ),
+                    PaymentTransaction.type.not_in([TxTypeEnum.DEPOSIT, TxTypeEnum.WITHDRAW])
+                )
+            )
             .order_by(PaymentTransaction.created_at.desc())
         )
         result = await session.execute(stmt)

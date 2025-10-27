@@ -16,10 +16,7 @@ router = Router()
 async def cmd_start(message: Message, session: SessionDep, **kwargs):
     username = message.from_user.username or "игрок"
     welcome_text = (
-        f"👋 Приветствуем тебя @{username} в игре Дурак Онлайн!\n"
-        "• Реальные игроки\n"
-        "• Партии от 2 до 5 игроков\n"
-        "• Оптимизировано для игры на мобильном телефоне"
+        f"👋 Приветствуем тебя @{username}"
     )
 
     tg_id = message.from_user.id

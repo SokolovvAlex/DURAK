@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     POSTGRES_PORT: int
     POSTGRES_HOST: str
 
-    DB_URL: str = f"postgresql+asyncpg://postgres:postgres@postgres:5432/durak"
+    DB_URL: str = f"postgresql+asyncpg://postgres:postgres@localhost:5432/durak"
 
     DB_PATH: str = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "..", "data", "db.sqlite3"
@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     FRONT_URL: str
 
     SECRET_KEY: str
+    ALGORITHM: str = "HS256"
 
     CENTRIFUGO_API_KEY: str
     CENTRIFUGO_URL: str
@@ -38,7 +39,7 @@ class Settings(BaseSettings):
     REDIS_SSL: bool
 
     PLAT_SECRET_KEY: str
-    PLAT_SHOP_ID: int
+    PLAT_SHOP_ID: str
 
     @property
     def hook_url(self) -> str:

@@ -47,7 +47,7 @@ async def get_session() -> AsyncSession:
             await session.close()  # Закрываем сессию
 
 
-SessionDep = Annotated[AsyncSession, Depends(get_session)]
+SessionDep: type[AsyncSession] = Annotated[AsyncSession, Depends(get_session)]
 
 class Base(AsyncAttrs, DeclarativeBase):
     __abstract__ = True

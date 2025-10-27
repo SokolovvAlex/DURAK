@@ -172,6 +172,41 @@ class PlatClient:
             logger.error(f"Callback verification error: {e}")
             return False
 
+    def _get_headers(self) -> Dict[str, str]:
+        """Базовые headers для авторизованных запросов"""
+        return {
+            "x-shop": self.shop_id,
+            "x-secret": self.secret_key,
+            "Content-Type": "application/json",
+        }
+
+    def get_withdraw_methods(self) -> Dict[str, Any]:
+        """
+        Получение доступных методов для выплат
+        Правильный эндпоинт: /api/merchant/withdraws/methods/by-api
+        """
+        endpoint = "/api/merchant/withdraws/methods/by-api"
+        url = f"{self.BASE_URL}{endpoint}"
+
+        logger.info("Getting withdraw methods from Plat")
+
+        try:
+            response = requests.get(url, headers=self._get_headers(), timeout=30)
+
+            if response.status_code == 200:
+                data = response.json()
+                logger.info(f"Withdraw methods received: {data}")
+
+                if data.get("success"):
+                    return data
+                else:
+                    raise RuntimeError(f"Plat API error: {data}")
+            else:
+                raise RuntimeError(f"Plat API error. Status: {response.status_code}")
+
+        except Exception as e:
+            logger.error(f"Failed to get withdraw methods: {e}")
+            raise
 
     def create_withdraw(
             self,
@@ -180,10 +215,12 @@ class PlatClient:
             method_id: int,
             purse: str,
             bank: Optional[str] = None,
-            token: Optional[str] = None,
             commission_payment: bool = True
     ) -> Dict[str, Any]:
-        """Создание выплаты средств"""
+        """
+        Создание выплаты средств
+        Эндпоинт: /api/merchant/withdraw/shop/create/by-api
+        """
         endpoint = "/api/merchant/withdraw/shop/create/by-api"
         url = f"{self.BASE_URL}{endpoint}"
 
@@ -197,77 +234,45 @@ class PlatClient:
 
         if bank:
             payload["bank"] = bank
-        if token:
-            payload["token"] = token
 
-        headers = {
-            "x-shop": self.shop_id,
-            "x-secret": self.secret_key,
-            "Content-Type": "application/json",
-        }
-
-        logger.info(f"🔄 Creating withdraw request:")
-        logger.info(f"   URL: {url}")
-        logger.info(f"   Headers: {headers}")
-        logger.info(f"   Payload: {payload}")
+        logger.info(f"Creating withdraw: {payload}")
 
         try:
-            import requests
             response = requests.post(
                 url,
                 json=payload,
-                headers=headers,
+                headers=self._get_headers(),
                 timeout=30
             )
 
-            logger.info(f"📥 Withdraw response:")
-            logger.info(f"   Status: {response.status_code}")
-            logger.info(f"   Headers: {dict(response.headers)}")
-            logger.info(f"   Text: {response.text}")
+            logger.info(f"Withdraw response status: {response.status_code}")
 
             if response.status_code == 200:
                 data = response.json()
                 if data.get("success"):
-                    logger.info(f"✅ Withdraw created successfully: {data}")
+                    logger.info(f"Withdraw created successfully: {data}")
                     return data
                 else:
                     error_msg = data.get('error', 'Unknown error')
-                    logger.error(f"❌ Plat withdraw error: {error_msg}")
+                    logger.error(f"Plat withdraw error: {error_msg}")
                     raise RuntimeError(f"Plat withdraw error: {error_msg}")
             else:
-                # Детальный анализ ошибки
-                try:
-                    error_data = response.json()
-                    error_msg = error_data.get('error', response.text)
-                    logger.error(f"❌ Plat API error {response.status_code}: {error_msg}")
-                except:
-                    error_msg = response.text
-                    logger.error(f"❌ Plat API error {response.status_code}: {error_msg}")
+                error_msg = response.text
+                logger.error(f"Plat API error {response.status_code}: {error_msg}")
                 raise RuntimeError(f"Plat API error {response.status_code}: {error_msg}")
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"💥 Network error creating withdraw: {e}")
-            raise RuntimeError(f"Network error: {e}")
+        except Exception as e:
+            logger.error(f"Failed to create withdraw: {e}")
+            raise
 
-
+    # Остальные методы остаются без изменений
     def get_withdraw_info(self, withdraw_id: int) -> Dict[str, Any]:
-        """
-        Получение информации о выплате
-
-        Docs: /api/merchant/shop/withdraw/info/{id}/by-api
-        """
+        """Получение информации о выплате"""
         endpoint = f"/api/merchant/shop/withdraw/info/{withdraw_id}/by-api"
         url = f"{self.BASE_URL}{endpoint}"
 
-        headers = {
-            "x-shop": self.shop_id,
-            "x-secret": self.secret_key,
-        }
-
-        logger.debug(f"Getting withdraw info: id={withdraw_id}")
-
         try:
-            response = requests.get(url, headers=headers, timeout=30)
+            response = requests.get(url, headers=self._get_headers(), timeout=30)
             if response.status_code == 200:
                 data = response.json()
                 if data.get("success"):
@@ -280,80 +285,80 @@ class PlatClient:
             logger.error(f"Failed to get withdraw info: {e}")
             raise
 
-    def get_withdraw_methods(self) -> Dict[str, Any]:
-        """
-        Получение доступных методов для выплат
-        Docs: /api/merchant/payments/methods/by-api
-        """
-        endpoint = "/api/merchant/payments/methods/by-api"
-        url = f"{self.BASE_URL}{endpoint}"
-
-        headers = {
-            "x-shop": self.shop_id,
-            "x-secret": self.secret_key,
-        }
-
-        logger.debug("Getting withdraw methods")
-
-        try:
-            response = requests.get(url, headers=headers, timeout=30)
-            if response.status_code == 200:
-                data = response.json()
-                logger.info(f"Withdraw methods response: {data}")
-
-                # Преобразуем формат systems в methods для совместимости
-                if data.get("success") and data.get("systems"):
-                    methods = []
-                    for system in data["systems"]:
-                        method = {
-                            "id": self._get_method_id(system["system_group"]),
-                            "name": system["system_group"],
-                            "label": self._get_method_label(system["system_group"]),
-                            "min": system["min"],
-                            "max": system["max"],
-                            "commission_fix": 0,  # Нужно уточнить у Plat
-                            "commission_percent": self._get_commission(system["system_group"])
-                        }
-                        methods.append(method)
-
-                    data["methods"] = methods
-
-                return data
-            else:
-                raise RuntimeError(f"Plat API error. Status: {response.status_code}")
-        except Exception as e:
-            logger.error(f"Failed to get withdraw methods: {e}")
-            raise
-
-    def _get_method_id(self, system_group: str) -> int:
-        """Маппинг system_group на числовые ID"""
-        mapping = {
-            "card": 1,
-            "sbp": 2,
-            "crypto": 3,
-            "alfa": 4,
-            "qr": 5
-        }
-        return mapping.get(system_group, 1)  # По умолчанию card
-
-    def _get_method_label(self, system_group: str) -> str:
-        """Получаем читаемое название метода"""
-        labels = {
-            "card": "Банковская карта",
-            "sbp": "СБП",
-            "crypto": "Криптовалюта",
-            "alfa": "Альфа-Банк",
-            "qr": "QR-код"
-        }
-        return labels.get(system_group, system_group)
-
-    def _get_commission(self, system_group: str) -> float:
-        """Получаем комиссию для метода (нужно уточнить у Plat)"""
-        commissions = {
-            "card": 2.0,
-            "sbp": 1.5,
-            "crypto": 3.0,
-            "alfa": 2.0,
-            "qr": 1.0
-        }
-        return commissions.get(system_group, 2.0)
+    # def get_withdraw_methods(self) -> Dict[str, Any]:
+    #     """
+    #     Получение доступных методов для выплат
+    #     Docs: /api/merchant/payments/methods/by-api
+    #     """
+    #     endpoint = "/api/merchant/payments/methods/by-api"
+    #     url = f"{self.BASE_URL}{endpoint}"
+    #
+    #     headers = {
+    #         "x-shop": self.shop_id,
+    #         "x-secret": self.secret_key,
+    #     }
+    #
+    #     logger.debug("Getting withdraw methods")
+    #
+    #     try:
+    #         response = requests.get(url, headers=headers, timeout=30)
+    #         if response.status_code == 200:
+    #             data = response.json()
+    #             logger.info(f"Withdraw methods response: {data}")
+    #
+    #             # Преобразуем формат systems в methods для совместимости
+    #             if data.get("success") and data.get("systems"):
+    #                 methods = []
+    #                 for system in data["systems"]:
+    #                     method = {
+    #                         "id": self._get_method_id(system["system_group"]),
+    #                         "name": system["system_group"],
+    #                         "label": self._get_method_label(system["system_group"]),
+    #                         "min": system["min"],
+    #                         "max": system["max"],
+    #                         "commission_fix": 0,  # Нужно уточнить у Plat
+    #                         "commission_percent": self._get_commission(system["system_group"])
+    #                     }
+    #                     methods.append(method)
+    #
+    #                 data["methods"] = methods
+    #
+    #             return data
+    #         else:
+    #             raise RuntimeError(f"Plat API error. Status: {response.status_code}")
+    #     except Exception as e:
+    #         logger.error(f"Failed to get withdraw methods: {e}")
+    #         raise
+    #
+    # def _get_method_id(self, system_group: str) -> int:
+    #     """Маппинг system_group на числовые ID"""
+    #     mapping = {
+    #         "card": 1,
+    #         "sbp": 2,
+    #         "crypto": 3,
+    #         "alfa": 4,
+    #         "qr": 5
+    #     }
+    #     return mapping.get(system_group, 1)  # По умолчанию card
+    #
+    # def _get_method_label(self, system_group: str) -> str:
+    #     """Получаем читаемое название метода"""
+    #     labels = {
+    #         "card": "Банковская карта",
+    #         "sbp": "СБП",
+    #         "crypto": "Криптовалюта",
+    #         "alfa": "Альфа-Банк",
+    #         "qr": "QR-код"
+    #     }
+    #     return labels.get(system_group, system_group)
+    #
+    # def _get_commission(self, system_group: str) -> float:
+    #     """Получаем комиссию для метода (нужно уточнить у Plat)"""
+    #     commissions = {
+    #         "card": 2.0,
+    #         "sbp": 1.5,
+    #         "crypto": 3.0,
+    #         "alfa": 2.0,
+    #         "qr": 1.0
+    #     }
+    #     return commissions.get(system_group, 2.0)

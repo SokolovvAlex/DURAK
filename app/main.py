@@ -17,6 +17,7 @@ from app.game.redis_dao.manager import redis_manager
 from app.users.router import router as user_router
 from app.payments.router import router as payments_router
 from app.friends.router import router as friend_router
+from app.admin.router import router as admin_router
 
 from fastapi.staticfiles import StaticFiles
 from aiogram.types import Update
@@ -72,11 +73,12 @@ app.include_router(burkozel_router)
 app.include_router(user_router)
 app.include_router(payments_router)
 app.include_router(friend_router)
+app.include_router(admin_router)
 
 
 #ngrok http --url bursting-smart-eagle.ngrok-free.app 8080
 #docker run --name redis -d -p 6379:6379 redis
 #docker run -d -p 8000:8000 --name centrifugo my-centrifugo
 
-# if __name__ == "__main__":
-#     uvicorn.run("main:app", host="127.0.0.1", port=8080, reload=True)
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=True, loop="asyncio")

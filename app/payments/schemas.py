@@ -1,6 +1,6 @@
 from decimal import Decimal
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import datetime
 from enum import Enum
 
@@ -58,27 +58,27 @@ class UserTransactionsOut(BaseModel):
 
 class WithdrawRequest(BaseModel):
     amount: Decimal = Field(..., gt=0, description="Сумма вывода в рублях")
-    card_number: str = Field(..., min_length=16, max_length=19, description="Номер карты")
-    bank_name: Optional[str] = Field(None, description="Название банка (для СБП)")
+    method_id: int = Field(..., description="ID метода выплаты из Plat")
+    purse: str = Field(..., description="Реквизиты для выплаты (номер карты/телефона/кошелька)")
+    bank_id: Optional[str] = Field(None, description="ID банка из списка доступных")
 
+class WithdrawMethodOut(BaseModel):
+    id: int
+    name: str
+    label: str
+    min: int
+    max: int
+    commission_fix: float
+    commission_percent: float
+    regex: Optional[str] = None
+
+class WithdrawMethodsResponse(BaseModel):
+    success: bool
+    methods: List[WithdrawMethodOut]
+    banks: Dict[str, str]
 
 class WithdrawResponse(BaseModel):
     withdraw_id: int
     status: TxStatusEnum
+    plat_withdraw_id: Optional[str] = None
     message: Optional[str] = None
-
-
-class WithdrawCallback(BaseModel):
-    signature: str
-    signature_v2: str
-    withdraw_id: str
-    shop_id: str
-    user_id: str
-    merchant_id: str
-    method_id: int
-    method_name: str
-    amount: Decimal
-    amount_to_pay: Decimal
-    status: int  # -3, -2, -1, 0, 1, 2
-    purse: str  # реквизиты вывода
-    note: Optional[dict] = None
