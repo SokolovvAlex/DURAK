@@ -53,22 +53,41 @@ async def find_players(
             raw = await redis.get(key)
             if raw:
                 room_data = json.loads(raw)
+                # Матчим только ожидающие комнаты с совпадающими режимами и вместимостью
                 if room_data.get("status") == "waiting":
+                    if room_data.get("capacity", 2) != max(2, min(3, req.capacity)):
+                        continue
+                    if room_data.get("speed", "normal") != req.speed:
+                        continue
+                    if bool(room_data.get("redeal", False)) != bool(req.redeal):
+                        continue
+                    if bool(room_data.get("dark", False)) != bool(req.dark):
+                        continue
+                    if bool(room_data.get("reliable_only", False)) != bool(req.reliable_only):
+                        continue
                     room = room_data
                     break
 
-    if room:  # нашли комнату
+    if room:  # нашли подходящую комнату
         room_id = room["room_id"]
+        # проверка на повторное подключение
+        if str(req.tg_id) in room.get("players", {}):
+            raise HTTPException(status_code=400, detail="Игрок уже в комнате")
+
+        # проверка лимита вместимости
+        if len(room.get("players", {})) >= room.get("capacity", 2):
+            raise HTTPException(status_code=400, detail="Комната уже заполнена")
+
         room["players"][str(req.tg_id)] = {
             "nickname": req.nickname,
             "is_ready": False,
         }
-        room["status"] = "matched"
-        await redis.set(room_id, json.dumps(room))
+        room["status"] = "matched" if len(room["players"]) >= room.get("capacity", 2) else "waiting"
+        await redis.setex(room_id, 3600, json.dumps(room))
 
         await send_msg(
             event="close_room",
-            payload={"room_id": req.room_id},
+            payload={"room_id": room_id},
             channel_name="rooms"
         )
 
@@ -79,10 +98,15 @@ async def find_players(
 
         return FindPartnerResponse(
             room_id=room_id,
-            status="matched",
-            message="Игрок найден",
+            status=room["status"],
+            message="Игрок найден" if room["status"] == "matched" else "Ожидание игроков",
             stake=req.stake,
-            opponent=opponent,
+            capacity=room.get("capacity", 2),
+            speed=room.get("speed", "normal"),
+            redeal=bool(room.get("redeal", False)),
+            dark=bool(room.get("dark", False)),
+            reliable_only=bool(room.get("reliable_only", False)),
+            opponent=opponent if room["status"] == "matched" else None,
         )
 
     # создаём новую
@@ -92,6 +116,11 @@ async def find_players(
         "stake": req.stake,
         "created_at": datetime.utcnow().isoformat(),
         "status": "waiting",
+        "capacity": max(2, min(3, req.capacity)),
+        "speed": req.speed,
+        "redeal": bool(req.redeal),
+        "dark": bool(req.dark),
+        "reliable_only": bool(req.reliable_only),
         "players": {
             str(req.tg_id): {
                 "nickname": req.nickname,
@@ -99,7 +128,7 @@ async def find_players(
             }
         },
     }
-    await redis.set(room_id, json.dumps(room_data))
+    await redis.setex(room_id, 3600, json.dumps(room_data))
     logger.info(f"Создана новая комната {room_id} пользователем {req.tg_id}")
 
     # после создания новой комнаты
@@ -114,8 +143,13 @@ async def find_players(
     return FindPartnerResponse(
         room_id=room_id,
         status="waiting",
-        message="Ожидание второго игрока",
+        message="Ожидание игроков",
         stake=req.stake,
+        capacity=room_data["capacity"],
+        speed=room_data["speed"],
+        redeal=room_data["redeal"],
+        dark=room_data["dark"],
+        reliable_only=room_data["reliable_only"],
     )
 
 
@@ -135,7 +169,7 @@ async def ready(req: ReadyRequest, redis=Depends(get_redis)):
 
     player["is_ready"] = True
     room["players"] = players
-    await redis.set(req.room_id, json.dumps(room))
+    await redis.setex(req.room_id, 3600, json.dumps(room))
 
     # если все готовы → старт
     if all(p["is_ready"] for p in players.values()) and "deck" not in room:
@@ -144,12 +178,16 @@ async def ready(req: ReadyRequest, redis=Depends(get_redis)):
         deck = list(DECK)
         random.shuffle(deck)
 
+        # Создаём фиксированный порядок игроков (seats)
+        seats = list(players.keys())
+        
         for tg_id, pdata in players.items():
             hand = deck[:4]  # в Буркозле 4 карты на старте
             deck = deck[4:]
             pdata["hand"] = hand
             pdata["round_score"] = 0
             pdata["penalty"] = 0
+            pdata["taken_tricks"] = 0  # количество взяток в партии
             logger.debug(f"[READY] {tg_id} ({pdata['nickname']}) получил {hand}")
 
         trump = deck[0][1]
@@ -157,11 +195,16 @@ async def ready(req: ReadyRequest, redis=Depends(get_redis)):
             "deck": deck,
             "trump": trump,
             "field": {"attack": None, "defend": None, "winner": None},
-            "last_turn": {"attack": None, "defend": None},  # новое поле
-            "attacker": list(players.keys())[0],
+            "last_turn": {"attack": None, "defend": None, "turns": []},
+            "seats": seats,  # фиксированный порядок игроков
+            "attacker": seats[0],
+            "defender": seats[1] if len(seats) > 1 else None,
+            "turn_order": seats.copy(),  # для определения следующего
+            "turns": [],  # список ходов текущего раунда
+            "current_turn_idx": 0,  # индекс текущего хода
             "status": "playing"
         })
-        await redis.set(req.room_id, json.dumps(room))
+        await redis.setex(req.room_id, 3600, json.dumps(room))
 
         for tg_id, pdata in players.items():
             await send_msg(
@@ -235,162 +278,286 @@ async def move(
             raise HTTPException(status_code=400, detail=f"Карты {c} нет в руке")
 
     # ========================
-    # атака
+    # ЛОГИКА ХОДА: Все игроки выкладывают карты, потом определяется победитель
     # ========================
-    if field["attack"] is None:
-        suits = {c[1] for c in cards}
-        if len(suits) != 1:
-            raise HTTPException(
-                status_code=400,
-                detail="Можно ходить только картами одной масти или комбинацией"
-            )
-
-        for c in cards:
-            hand.remove(list(c))
-
-        field["attack"] = {"player": str(req.tg_id), "cards": [list(c) for c in cards]}
-        field["defend"] = None
-        field["winner"] = None
-
-        # сохраняем последний ход
-        room["last_turn"] = {
-            "attack": {"player": str(req.tg_id), "cards": [list(c) for c in cards]},
-            "defend": None
-        }
-
-        logger.info(f"[MOVE] Игрок {req.tg_id} атаковал {cards}")
-
-    # ========================
-    # защита
-    # ========================
-    else:
-        if str(req.tg_id) == attacker:
-            raise HTTPException(
-                status_code=400,
-                detail="Атакующий не может защищаться"
-            )
-
-        atk_cards = [tuple(c) for c in field["attack"]["cards"]]
-        if len(cards) != len(atk_cards):
-            raise HTTPException(
-                status_code=400,
-                detail="Количество карт для защиты должно совпадать с атакой"
-            )
-
-        beats_all = can_defend_all(atk_cards, cards, trump)
-
-        for c in cards:
-            hand.remove(list(c))
-
-        field["defend"] = {"player": str(req.tg_id), "cards": [list(c) for c in cards]}
-
-        # определяем победителя
-        winner = str(req.tg_id) if beats_all else field["attack"]["player"]
-        field["winner"] = winner
-
-        # обновляем последний ход
-        room["last_turn"] = {
-            "attack": field["attack"],
-            "defend": {"player": str(req.tg_id), "cards": [list(c) for c in cards]}
-        }
-
-        logger.info(f"[MOVE] Победитель раздачи: {winner}")
-
-        # начисляем очки
-        taken_cards = atk_cards + cards
+    
+    # Определяем порядок ходов
+    seats = room.get("seats", list(players.keys()))
+    
+    # Фильтруем активных игроков (у кого < 12 штрафных очков)
+    active_seats = [pid for pid in seats if players[pid]["penalty"] < 12]
+    
+    current_turn_idx = room.get("current_turn_idx", 0)
+    turns = room.get("turns", [])  # список карт, выложенных на стол
+    
+    # Проверяем, что ходит правильный игрок (из активных)
+    expected_player = active_seats[current_turn_idx % len(active_seats)] if active_seats else seats[current_turn_idx % len(seats)]
+    if str(req.tg_id) != expected_player:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Сейчас ход игрока {expected_player}, а не {req.tg_id}"
+        )
+    
+    suits = {c[1] for c in cards}
+    if len(suits) != 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Можно ходить только картами одной масти"
+        )
+    
+    # Убираем карты из руки игрока
+    for c in cards:
+        hand.remove(list(c))
+    
+    # Добавляем ход в список
+    turns.append({
+        "player": str(req.tg_id),
+        "cards": [list(c) for c in cards]
+    })
+    
+    room["turns"] = turns
+    room["current_turn_idx"] = current_turn_idx + 1
+    
+    logger.info(f"[MOVE] Игрок {req.tg_id} выложил {cards}. Всего ходов: {len(turns)}")
+    
+    # Проверяем, завершился ли раунд (все активные игроки выложили карты)
+    if room["current_turn_idx"] >= len(active_seats):
+        # Все игроки походили - определяем победителя
+        logger.info("[MOVE] Все игроки походили, определяем победителя")
+        
+        # Находим старшую карту (по масти, затем по значению, учитывая козыри)
+        winner_idx = 0
+        winner_card = turns[0]["cards"][0]
+        
+        for i, turn in enumerate(turns):
+            card = turn["cards"][0]
+            
+            # Проверяем, кто старше
+            if card[1] == trump and winner_card[1] != trump:
+                # Текущая карта козырь, а предыдущая нет - она выигрывает
+                winner_idx = i
+                winner_card = card
+            elif card[1] == trump and winner_card[1] == trump:
+                # Обе козыри - сравниваем значения
+                from app.game.core.constants import NAME_TO_VALUE
+                if NAME_TO_VALUE[card[0]] > NAME_TO_VALUE[winner_card[0]]:
+                    winner_idx = i
+                    winner_card = card
+            elif card[1] == winner_card[1]:
+                # Одна масть - сравниваем значения
+                from app.game.core.constants import NAME_TO_VALUE
+                if NAME_TO_VALUE[card[0]] > NAME_TO_VALUE[winner_card[0]]:
+                    winner_idx = i
+                    winner_card = card
+        
+        winner_id = turns[winner_idx]["player"]
+        
+        # Начисляем очки и взятки
+        taken_cards = []
+        for turn in turns:
+            taken_cards.extend([tuple(c) for c in turn["cards"]])
+        
         points = sum(card_points(c) for c in taken_cards)
-        players[str(winner)]["round_score"] += points
-
-        # очищаем поле
+        players[winner_id]["round_score"] += points
+        players[winner_id]["taken_tricks"] += 1
+        
+        logger.info(f"[MOVE] Победитель раздачи: {winner_id}, очков: {points}")
+        
+        # Обновляем last_turn с информацией о завершённой взятке
+        # Форматируем информацию для last_turn (совместимо со старой логикой)
+        room["last_turn"] = {
+            "attack": turns[0] if len(turns) > 0 else None,
+            "defend": turns[1] if len(turns) > 1 else None,
+            "turns": turns  # сохраняем все ходы
+        }
+        
+        # Очищаем поле и сбрасываем индексы
         room["field"] = {"attack": None, "defend": None, "winner": None}
+        room["turns"] = []
+        room["current_turn_idx"] = 0
+        winner = winner_id
 
         # print(deck)
         # print(all(len(p["hand"]) == 0 for p in players.values()))
 
         if not deck and all(len(p["hand"]) == 0 for p in players.values()):
             MAX_PENALTY = 12
+            num_players = len(players)
             scores_round = {pid: pdata["round_score"] for pid, pdata in players.items()}
             max_score = max(scores_round.values())
 
             # начисляем штрафные очки по правилам Буркозла
-            for pid, score in scores_round.items():
-                if score == max_score:
-                    penalty = 0
-                elif score > 31:
-                    penalty = 2
-                elif score > 0:
-                    penalty = 4
-                else:  # score == 0
-                    penalty = 6
+            for pid, pdata in players.items():
+                score = pdata["round_score"]
+                tricks = pdata["taken_tricks"]
+                
+                if num_players == 2:
+                    # Для двух игроков
+                    if score > 60:
+                        penalty = 0
+                    elif score >= 31:
+                        penalty = 2
+                    elif score > 0:
+                        penalty = 4
+                    elif tricks > 0:  # 0 очков но со взятками
+                        penalty = 4
+                    else:  # 0 очков без взяток
+                        penalty = 6
+                else:  # Для трёх игроков
+                    if score >= 40:
+                        penalty = 0
+                    elif score >= 21:
+                        penalty = 2
+                    elif score > 0:
+                        penalty = 4
+                    elif tricks > 0:  # 0 очков но со взятками
+                        penalty = 4
+                    else:  # 0 очков без взяток
+                        penalty = 6
 
                 players[pid]["penalty"] += penalty
                 logger.info(f"[PENALTY] {pid} получил {penalty}, всего {players[pid]['penalty']}")
 
-            # print(any(pdata["penalty"] >= MAX_PENALTY for pdata in players.values()))
             # проверяем лимит штрафов
-            if any(pdata["penalty"] >= MAX_PENALTY for pdata in players.values()):
-                game_winner = min(players.keys(), key=lambda pid: players[pid]["penalty"])
-                game_loser = max(players.keys(), key=lambda pid: players[pid]["penalty"])
-                print(game_loser)
-                # game_loser = 12
+            losers = [pid for pid, pdata in players.items() if pdata["penalty"] >= MAX_PENALTY]
+            
+            if losers:
+                # Игра закончена только если остался один игрок или никого
+                remaining_players = {pid: pdata for pid, pdata in players.items() if pid not in losers}
+                
+                if len(remaining_players) <= 1:
+                    # Остался один игрок или никого - игра закончена
+                    if len(remaining_players) == 1:
+                        game_winner = list(remaining_players.keys())[0]
+                    else:
+                        # Все выбыли - определяем победителя по минимальным штрафам
+                        game_winner = min(players.keys(), key=lambda pid: players[pid]["penalty"])
+                    
+                    logger.info(f"[GAME_OVER] Победитель {game_winner}, проигравшие {losers}")
+                    
+                    dao = TransactionDAO(session)
+                    
+                    # Формируем детальную информацию о результатах
+                    game_results = {}
+                    for pid, pdata in players.items():
+                        game_results[pid] = {
+                            "nickname": pdata["nickname"],
+                            "round_score": pdata["round_score"],
+                            "penalty": pdata["penalty"],
+                            "taken_tricks": pdata["taken_tricks"],
+                            "is_winner": pid == game_winner,
+                            "is_loser": pid in losers
+                        }
+                    
+                    if len(players) == 2:
+                        # Для двух игроков используем старый метод
+                        balances = await dao.apply_game_result(
+                            winner_id=int(game_winner),
+                            loser_id=int(losers[0]),
+                            stake=room["stake"],
+                        )
+                        balances["winner_result"] = players[game_winner]["penalty"]
+                        balances["loser_result"] = players[losers[0]]["penalty"]
+                    else:
+                        # Для трёх и более игроков используем новый метод
+                        balances = await dao.apply_game_result_multiplayer(
+                            winner_id=int(game_winner),
+                            loser_ids=[int(lid) for lid in losers],
+                            stake=room["stake"],
+                        )
+                        balances["winner_result"] = players[game_winner]["penalty"]
+                        balances["losers_result"] = {lid: players[lid]["penalty"] for lid in losers}
+                    
+                    await session.commit()
 
-                dao = TransactionDAO(session)
-                balances = await dao.apply_game_result(
-                    winner_id=int(game_winner),
-                    loser_id=int(game_loser),
-                    stake=room["stake"],
-                )
-                await session.commit()
+                    await send_msg(
+                        event="game_over",
+                        payload={
+                            "room_id": req.room_id,
+                            "winner": game_winner,
+                            "losers": losers,
+                            "stake": room["stake"],
+                            "balances": balances,
+                            "results": game_results,  # Детальная информация о всех игроках
+                            "last_turn": room["last_turn"],
+                        },
+                        channel_name=f"room#{req.room_id}",
+                    )
 
-                logger.info(f"[GAME_OVER] Победитель {game_winner}, проигравший {game_loser}")
+                    await redis.unlink(req.room_id)
 
-                balances["winner_result"] = players[game_winner]["penalty"]  # Штрафы победителя
-                balances["loser_result"] = 12  # Всегда 12 у проигравшего
+                    await send_msg(
+                        event="close_room",
+                        payload={"room_id": req.room_id},
+                        channel_name="rooms"
+                    )
 
-                await send_msg(
-                    event="game_over",
-                    payload={
-                        "room_id": req.room_id,
-                        "winner": game_winner,
-                        "loser": game_loser,
-                        "stake": room["stake"],
+                    return {
+                        "ok": True, 
+                        "message": "Игра завершена", 
                         "balances": balances,
-                        "last_turn": room["last_turn"],
-                    },
-                    channel_name=f"room#{req.room_id}",
-                )
+                        "results": game_results
+                    }
+                
+                else:
+                    # Осталось несколько игроков - отправляем уведомление о выбывших
+                    logger.info(f"[GAME] Игроки выбыли: {losers}, игра продолжается между {remaining_players.keys()}")
+                    
+                    # Отправляем уведомление о выбывших игроках
+                    await send_msg(
+                        event="players_out",
+                        payload={
+                            "room_id": req.room_id,
+                            "losers": losers,
+                            "remaining": list(remaining_players.keys()),
+                            "last_turn": room["last_turn"],
+                        },
+                        channel_name=f"room#{req.room_id}",
+                    )
+                    
+                    # Продолжаем игру - переходим к пересдаче
 
-                await redis.unlink(req.room_id)
-
-                await send_msg(
-                    event="close_room",
-                    payload={"room_id": req.room_id},
-                    channel_name="rooms"
-                )
-
-                return {"ok": True, "message": "Игра завершена", "balances": balances}
-
-            else:
+            # Пересдаём партию если не было проигравших ИЛИ есть несколько оставшихся игроков
+            if not losers or (losers and len(remaining_players) > 1):
                 # пересдаём новую партию
                 from app.game.core.constants import DECK
                 deck = list(DECK)
                 random.shuffle(deck)
 
-                for pid, pdata in players.items():
+                # Определяем активных игроков (у кого < 12 штрафных)
+                active_players = {pid: pdata for pid, pdata in players.items() if pdata["penalty"] < 12}
+                
+                # Раздаём карты только активным игрокам
+                for pid, pdata in active_players.items():
                     pdata["hand"] = deck[:4]
                     deck = deck[4:]
                     pdata["round_score"] = 0  # сброс очков партии, penalty сохраняем
+                    pdata["taken_tricks"] = 0  # сброс взяток
+                
+                # У выбывших игроков очищаем руки
+                for pid, pdata in players.items():
+                    if pid not in active_players:
+                        pdata["hand"] = []
 
                 trump = deck[0][1]
+                seats = room.get("seats", list(players.keys()))
+                # Обновляем attacker на первого активного игрока
+                active_seats = [pid for pid in seats if pid in active_players]
+                first_active = active_seats[0] if active_seats else seats[0]
+                
                 room.update({
                     "deck": deck,
                     "trump": trump,
                     "field": {"attack": None, "defend": None, "winner": None},
-                    "attacker": list(players.keys())[0],
+                    "attacker": first_active,
+                    "defender": active_seats[1] if len(active_seats) > 1 else None,
+                    "turn_order": active_seats.copy(),  # Только активные игроки
+                    "turns": [],
+                    "current_turn_idx": 0,
                     "status": "playing"
                 })
 
-                await redis.set(req.room_id, json.dumps(room))
+                await redis.setex(req.room_id, 3600, json.dumps(room))
                 await send_msg(
                     "reshuffle",
                     {"room": room, "trump": trump, "deck_count": len(deck), "last_turn": room["last_turn"]},
@@ -402,7 +569,12 @@ async def move(
         # если колода ещё есть → добор карт
         # ========================
         else:
-            order = [winner] + [pid for pid in players.keys() if pid != winner]
+            # Используем фиксированный порядок игроков (turn_order - только активные)
+            active_seats = room.get("turn_order", list(players.keys()))
+            
+            # Находим позицию победителя и начинаем с него
+            winner_idx = active_seats.index(winner)
+            order = active_seats[winner_idx:] + active_seats[:winner_idx]
 
             # будем накапливать новые карты для каждого игрока
             new_cards_by_player = {pid: [] for pid in order}
@@ -412,8 +584,6 @@ async def move(
                 pid: [list(c) for c in players[pid]["hand"]]
                 for pid in order
             }
-
-            # print(old_hand_by_player)
 
             # раздаём карты по одной за круг
             while deck and any(len(players[pid]["hand"]) < 4 for pid in order):
@@ -442,11 +612,14 @@ async def move(
                     )
 
         room["attacker"] = winner
+        # Следующий атакующий - победитель этой взятки
+        room["defender"] = seats[(seats.index(winner) + 1) % len(seats)] if len(seats) > 1 else None
+    
     # сохраняем изменения
     players[str(req.tg_id)]["hand"] = hand
     room["players"] = players
     room["deck"] = deck
-    await redis.set(req.room_id, json.dumps(room))
+    await redis.setex(req.room_id, 3600, json.dumps(room))
 
     await send_msg(event="move", payload={"room": room,
                                           "last_turn": room["last_turn"],
@@ -489,7 +662,7 @@ async def leave(
         if players:
             room["players"] = players
             room["status"] = "waiting"
-            await redis.set(req.room_id, json.dumps(room))
+            await redis.setex(req.room_id, 3600, json.dumps(room))
 
             await send_msg(
                 "new_room",
@@ -506,7 +679,7 @@ async def leave(
                 "status": "waiting",
                 "players": players
             })
-            await redis.set(req.room_id, json.dumps(room))
+            await redis.setex(req.room_id, 3600, json.dumps(room))
             await send_msg(
                 "close_room",
                 {"room_id": req.room_id},
@@ -519,16 +692,26 @@ async def leave(
     else:
         logger.info(f"[LEAVE] Игрок {req.tg_id} вышел во время игры (проигрыш)")
 
-        # определяем второго игрока
-        opponent_id = [pid for pid in players.keys() if pid != str(req.tg_id)][0]
-
+        # определяем оставшихся игроков
+        remaining_ids = [pid for pid in players.keys() if pid != str(req.tg_id)]
+        
         from app.payments.dao import TransactionDAO
         dao = TransactionDAO(session)
-        balances = await dao.apply_game_result(
-            winner_id=int(opponent_id),
-            loser_id=int(req.tg_id),
-            stake=room["stake"],
-        )
+        
+        if len(players) == 2:
+            # Для двух игроков используем старый метод
+            balances = await dao.apply_game_result(
+                winner_id=int(remaining_ids[0]),
+                loser_id=int(req.tg_id),
+                stake=room["stake"],
+            )
+        else:
+            # Для трёх и более игроков используем новый метод
+            balances = await dao.apply_game_result_multiplayer(
+                winner_id=int(remaining_ids[0]),
+                loser_ids=[int(req.tg_id)],
+                stake=room["stake"],
+            )
         await session.commit()
 
         # уведомляем игроков
@@ -536,8 +719,8 @@ async def leave(
             event="game_over",
             payload={
                 "room_id": req.room_id,
-                "winner": opponent_id,
-                "loser": str(req.tg_id),
+                "winner": remaining_ids[0],
+                "losers": [str(req.tg_id)],
                 "stake": room["stake"],
                 "balances": balances,
             },
@@ -567,7 +750,7 @@ async def leave(
 
         return {
             "ok": True,
-            "winner": opponent_id,
+            "winner": remaining_ids[0],
             "loser": str(req.tg_id),
             "balances": balances,
             "message": "Игра завершена, игрок вышел",
@@ -620,7 +803,8 @@ async def join_room(
     if str(tg_id) in players:
         raise HTTPException(status_code=400, detail="Игрок уже в комнате")
 
-    if len(players) >= 2:
+    capacity = int(room.get("capacity", 2))
+    if len(players) >= capacity:
         raise HTTPException(status_code=400, detail="Комната уже заполнена")
 
     # проверяем баланс игрока
@@ -640,10 +824,10 @@ async def join_room(
     }
 
     room["players"] = players
-    if len(players) == 2:
+    if len(players) >= capacity:
         room["status"] = "matched"
 
-    await redis.set(room_id, json.dumps(room))
+    await redis.setex(room_id, 3600, json.dumps(room))
 
     await send_msg(
         event="close_room",
@@ -732,41 +916,132 @@ async def create_test_room(redis: CustomRedis = Depends(get_redis)):
 async def create_last_hand_room(redis: CustomRedis = Depends(get_redis)):
     """
     Создаёт комнату с последней раздачей для проверки конца игры.
-    Игрок Sasha (10 штрафных очков) против Ed (6 штрафных очков).
+    3 игрока, ставка 1000. У всех есть одна карта в руке, колода пуста.
+    Игрок 5254325840 (11 штрафных) выбывает, игроки 111 (0) и 222 (0) продолжают.
     """
-    room_id = "10_071b017b"
+    room_id = "1000_test_final"
     trump = "♦"
 
     room = {
         "room_id": room_id,
-        "stake": 10,
+        "stake": 1000,
         "created_at": datetime.utcnow().isoformat(),
         "status": "playing",
+        "capacity": 3,
+        "speed": "normal",
+        "redeal": False,
+        "dark": False,
+        "reliable_only": False,
         "players": {
-            "7022782558": {
-                "nickname": "sasha",
-                "is_ready": True,
-                "hand": [["7", "♥"]],  # одна карта
-                "round_score": 25,
-                "penalty": 10
-            },
             "5254325840": {
-                "nickname": "ed",
+                "nickname": "edward",
                 "is_ready": True,
-                "hand": [["8", "♥"]],  # одна карта, старше
-                "round_score": 28,
-                "penalty": 0
+                "hand": [["7", "♦"]],
+                "round_score": 0,
+                "penalty": 11,
+                "taken_tricks": 0
+            },
+            "111": {
+                "nickname": "gg",
+                "is_ready": True,
+                "hand": [["A", "♠"]],
+                "round_score": 0,
+                "penalty": 0,
+                "taken_tricks": 0
+            },
+            "222": {
+                "nickname": "hh",
+                "is_ready": True,
+                "hand": [["K", "♦"]],
+                "round_score": 0,
+                "penalty": 0,
+                "taken_tricks": 0
             }
         },
         "deck": [],  # колода пуста — игра должна закончиться
         "trump": trump,
         "field": {"attack": None, "defend": None, "winner": None},
-        "last_turn": {"attack": None, "defend": None},
-        "attacker": "7022782558"  # Саша начинает
+        "last_turn": {"attack": None, "defend": None, "turns": []},
+        "seats": ["5254325840", "111", "222"],
+        "attacker": "5254325840",
+        "defender": "111",
+        "turn_order": ["5254325840", "111", "222"],
+        "turns": [],
+        "current_turn_idx": 0
     }
 
-    await redis.set(room_id, json.dumps(room))
+    await redis.setex(room_id, 3600, json.dumps(room))
     logger.info(f"[TEST] Создана тестовая 'последняя раздача' {room_id}")
+
+    return {"ok": True, "room": room}
+
+
+@router.post("/create_one_out_room")
+async def create_one_out_room(redis: CustomRedis = Depends(get_redis)):
+    """
+    Создаёт комнату где 1 игрок уже выбыл с 12 штрафными очками.
+    2 игрока продолжают игру.
+    """
+    room_id = "1000_test_one_out"
+    trump = "♦"
+
+    room = {
+        "room_id": room_id,
+        "stake": 1000,
+        "created_at": datetime.utcnow().isoformat(),
+        "status": "playing",
+        "capacity": 3,
+        "speed": "normal",
+        "redeal": False,
+        "dark": False,
+        "reliable_only": False,
+        "players": {
+            "5254325840": {
+                "nickname": "edward",
+                "is_ready": True,
+                "hand": [],
+                "round_score": 25,
+                "penalty": 12,
+                "taken_tricks": 1
+            },
+            "111": {
+                "nickname": "gg",
+                "is_ready": True,
+                "hand": [["A", "♠"], ["8", "♥"]],
+                "round_score": 35,
+                "penalty": 2,
+                "taken_tricks": 2
+            },
+            "222": {
+                "nickname": "hh",
+                "is_ready": True,
+                "hand": [["K", "♦"], ["Q", "♣"]],
+                "round_score": 28,
+                "penalty": 4,
+                "taken_tricks": 1
+            }
+        },
+        "deck": [],  # колода пуста
+        "trump": trump,
+        "field": {"attack": None, "defend": None, "winner": None},
+        "last_turn": {
+            "attack": {"player": "111", "cards": [["6", "♣"]]},
+            "defend": {"player": "222", "cards": [["Q", "♣"]]},
+            "turns": [
+                {"player": "111", "cards": [["6", "♣"]]},
+                {"player": "222", "cards": [["Q", "♣"]]}
+            ]
+        },
+        "seats": ["5254325840", "111", "222"],
+        "attacker": "111",
+        "defender": "222",
+        "turn_order": ["5254325840", "111", "222"],
+        "turns": [],
+        "current_turn_idx": 0
+    }
+
+    await redis.setex(room_id, 3600, json.dumps(room))
+    logger.info(f"[TEST] Создана тестовая комната '1 игрок выбыл' {room_id}")
 
     return {"ok": True, "room": room}
 

@@ -318,6 +318,78 @@ class TransactionDAO:
             "loser_result": lose_result.id,
         }
 
+    async def apply_game_result_multiplayer(
+        self, 
+        winner_id: int, 
+        loser_ids: list[int], 
+        stake: int
+    ):
+        """
+        Обрабатывает результат игры с несколькими проигравшими.
+        Победитель забирает сумму ставок всех игроков.
+        Проигравшие теряют свою ставку.
+        """
+        from decimal import Decimal
+        
+        # Получаем всех пользователей
+        winner = await self.session.scalar(select(User).where(User.tg_id == winner_id))
+        if not winner:
+            raise ValueError(f"Победитель {winner_id} не найден")
+        
+        # Общая сумма, которую получит победитель
+        total_pot = stake * (len(loser_ids) + 1)  # ставка от каждого
+        
+        # Начисляем победителю всю сумму (без рейка пока)
+        winner.balance += Decimal(str(total_pot))
+        
+        # Списываем у проигравших
+        transactions = []
+        game_results = []
+        
+        for loser_id in loser_ids:
+            loser = await self.session.scalar(select(User).where(User.tg_id == loser_id))
+            if not loser:
+                continue
+            
+            loser.balance -= Decimal(str(stake))
+            
+            lose_tx = PaymentTransaction(
+                user_id=loser.id,
+                amount=-stake,
+                type=TxTypeEnum.LOSS,
+                status=TxStatusEnum.POSTED,
+                created_at=datetime.utcnow()
+            )
+            lose_result = GameResult(
+                user_id=loser.id,
+                result=GameResultEnum.LOSS,
+                rate=stake,
+            )
+            transactions.append(lose_tx)
+            game_results.append(lose_result)
+        
+        # Транзакция и результат для победителя
+        win_tx = PaymentTransaction(
+            user_id=winner.id,
+            amount=total_pot,
+            type=TxTypeEnum.PAYOUT,
+            status=TxStatusEnum.POSTED,
+            created_at=datetime.utcnow()
+        )
+        win_result = GameResult(
+            user_id=winner.id,
+            result=GameResultEnum.WIN,
+            rate=total_pot,
+        )
+        
+        self.session.add_all([win_tx, win_result] + transactions + game_results)
+        await self.session.flush()
+        
+        return {
+            "winner_balance": float(winner.balance),
+            "losers_balance": {lid: loser_id for lid in loser_ids},
+        }
+
     @classmethod
     async def get_user_transactions(cls, session: AsyncSession, tg_id: int) -> List[PaymentTransaction]:
         """Получить все транзакции пользователя по tg_id"""

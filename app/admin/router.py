@@ -7,7 +7,7 @@ from app.database import SessionDep
 from app.admin.dao import AdminDAO
 from app.admin.schemas import (
     AdminCreate, AdminOut, LoginRequest, LoginResponse,
-    UserAdminOut, UserAdminUpdate
+    UserAdminOut, UserAdminUpdate, TransactionAdminOut, PlatformStatistics
 )
 from app.admin.auth import get_password_hash, authenticate_user, create_access_token
 from app.admin.dependencies import get_current_admin_user, get_current_super_admin
@@ -15,6 +15,10 @@ from app.exception import IncorrectEmailOrPasswordException
 from app.users.dao import UserDAO
 from app.users.models import User
 from app.admin.dao import AdminDAO
+from app.payments.dao import PaymentTransactionDAO
+from app.payments.models import PaymentTransaction, TxTypeEnum, TxStatusEnum
+from sqlalchemy import select
+from app.admin.stats_dao import StatsDAO
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -317,4 +321,68 @@ async def change_admin_permissions(
         raise HTTPException(status_code=404, detail="Администратор не найден")
     
     return AdminOut.model_validate(updated)
+
+
+# ============= Эндпоинты для транзакций =============
+
+
+@router.get("/transactions", response_model=list[TransactionAdminOut], status_code=200)
+async def get_all_transactions(
+    session: SessionDep,
+    admin: User = Depends(get_current_admin_user),
+    skip: int = Query(0, ge=0, description="Количество записей для пропуска"),
+    limit: int = Query(100, ge=1, le=1000, description="Лимит записей"),
+    type: Optional[str] = Query(None, description="Фильтр по типу транзакции"),
+    status: Optional[str] = Query(None, description="Фильтр по статусу транзакции"),
+):
+    """
+    Получить список всех транзакций с пагинацией и фильтрами
+    """
+    query = select(PaymentTransaction)
+    
+    # Применяем фильтры
+    if type:
+        query = query.where(PaymentTransaction.type == type)
+    if status:
+        query = query.where(PaymentTransaction.status == status)
+    
+    # Сортировка по дате (новые сначала)
+    query = query.order_by(PaymentTransaction.created_at.desc())
+    
+    result = await session.execute(query)
+    transactions = list(result.scalars().all())
+    
+    # Пагинация
+    transactions = transactions[skip:skip + limit]
+    
+    return [TransactionAdminOut.model_validate(tx) for tx in transactions]
+
+
+@router.get("/transactions/{transaction_id}", response_model=TransactionAdminOut, status_code=200)
+async def get_transaction_by_id(
+    transaction_id: int,
+    session: SessionDep,
+    admin: User = Depends(get_current_admin_user),
+):
+    """
+    Получить детальную информацию о транзакции
+    """
+    tx = await PaymentTransactionDAO.get_transaction_by_id(session, transaction_id)
+    
+    if not tx:
+        raise HTTPException(status_code=404, detail="Транзакция не найдена")
+    
+    return TransactionAdminOut.model_validate(tx)
+
+
+@router.get("/statistics", response_model=PlatformStatistics, status_code=200)
+async def get_platform_statistics(
+    session: SessionDep,
+    admin: User = Depends(get_current_admin_user),
+):
+    """
+    Получить общую статистику платформы
+    """
+    stats = await StatsDAO.get_platform_statistics(session)
+    return PlatformStatistics(**stats)
 

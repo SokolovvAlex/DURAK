@@ -54,6 +54,12 @@ async def create_new_room(
     nickname: str,
     stake: int,
     redis_client: CustomRedis,
+    *,
+    capacity: int = 2,
+    speed: str = "normal",
+    redeal: bool = False,
+    dark: bool = False,
+    reliable_only: bool = False,
 ) -> dict:
     """Создать новую комнату."""
     room_id = f"{stake}_{uuid.uuid4().hex[:8]}"
@@ -64,6 +70,11 @@ async def create_new_room(
         "stake": stake,
         "created_at": datetime.now().isoformat(),
         "status": "waiting",
+        "capacity": max(2, min(3, int(capacity))),
+        "speed": speed,
+        "redeal": bool(redeal),
+        "dark": bool(dark),
+        "reliable_only": bool(reliable_only),
         "players": {
             str(tg_id): {
                 "nickname": nickname,
@@ -72,7 +83,7 @@ async def create_new_room(
             }
         },
     }
-    await redis_client.set(room_id, json.dumps(room_data))
+    await redis_client.setex(room_id, 3600, json.dumps(room_data))
 
     return {
         "status": "waiting",
@@ -99,7 +110,7 @@ async def add_user_to_room(
         "token": token,
     }
 
-    await redis_client.set(room["room_id"], json.dumps(room))
+    await redis_client.setex(room["room_id"], 3600, json.dumps(room))
 
     return {
         "status": "matched",

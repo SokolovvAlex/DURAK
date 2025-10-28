@@ -78,3 +78,32 @@ class UserAdminUpdate(BaseModel):
     is_super_admin: Optional[bool] = None
     is_active: Optional[bool] = None
 
+
+class TransactionAdminOut(BaseModel):
+    """Схема для вывода транзакции в админке"""
+    id: int
+    user_id: int
+    type: str
+    amount: float
+    status: str
+    merchant_order_id: Optional[str] = None
+    plat_guid: Optional[str] = None
+    plat_withdraw_id: Optional[str] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PlatformStatistics(BaseModel):
+    """Схема общей статистики платформы"""
+    total_users: int
+    online_users: int
+    total_balance: float
+    total_deposits: float
+    deposits_count: int
+    total_withdrawals: float
+    withdrawals_count: int
+    net_profit: float
+
+    model_config = ConfigDict(from_attributes=True)
+

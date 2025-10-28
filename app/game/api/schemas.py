@@ -38,12 +38,23 @@ class FindPartnerRequest(BaseModel):
     tg_id: int
     nickname: str
     stake: int
+    capacity: int = 2  # 2 или 3
+    # Метаданные режимов (информация для комнаты; логика режимов пока не включена)
+    speed: Literal["normal", "fast"] = "normal"
+    redeal: bool = False  # пересдача
+    dark: bool = False    # игра "в темную"
+    reliable_only: bool = False  # стол для надежных игроков
 
 class FindPartnerResponse(BaseModel):
     room_id: str
     status: str  # waiting | matched
     message: str
     stake: int
+    capacity: int
+    speed: Literal["normal", "fast"]
+    redeal: bool
+    dark: bool
+    reliable_only: bool
     opponent: Optional[str] = None  # ник оппонента, если уже matched
 
 
