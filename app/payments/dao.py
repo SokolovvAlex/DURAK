@@ -275,7 +275,9 @@ class TransactionDAO:
             raise ValueError("Пользователь не найден")
 
         # --- Обновляем балансы ---
+        # Победитель получает только ставку проигравшего
         winner.balance += stake
+        # Проигравший теряет свою ставку
         loser.balance -= stake
 
         # --- Создаём транзакции ---
@@ -326,7 +328,7 @@ class TransactionDAO:
     ):
         """
         Обрабатывает результат игры с несколькими проигравшими.
-        Победитель забирает сумму ставок всех игроков.
+        Победитель получает только ставки проигравших (не свою ставку).
         Проигравшие теряют свою ставку.
         """
         from decimal import Decimal
@@ -337,9 +339,10 @@ class TransactionDAO:
             raise ValueError(f"Победитель {winner_id} не найден")
         
         # Общая сумма, которую получит победитель
-        total_pot = stake * (len(loser_ids) + 1)  # ставка от каждого
+        # Победитель получает только ставки проигравших (не свою)
+        total_pot = stake * len(loser_ids)
         
-        # Начисляем победителю всю сумму (без рейка пока)
+        # Начисляем победителю сумму ставок проигравших (без рейка пока)
         winner.balance += Decimal(str(total_pot))
         
         # Списываем у проигравших
@@ -351,6 +354,7 @@ class TransactionDAO:
             if not loser:
                 continue
             
+            # Проигравший теряет свою ставку
             loser.balance -= Decimal(str(stake))
             
             lose_tx = PaymentTransaction(

@@ -284,8 +284,13 @@ async def move(
     # Определяем порядок ходов
     seats = room.get("seats", list(players.keys()))
     
-    # Фильтруем активных игроков (у кого < 12 штрафных очков)
-    active_seats = [pid for pid in seats if players[pid]["penalty"] < 12]
+    # Используем turn_order если он есть, иначе фильтруем активных игроков
+    turn_order = room.get("turn_order")
+    if turn_order:
+        active_seats = turn_order
+    else:
+        # Фильтруем активных игроков (у кого < 12 штрафных очков)
+        active_seats = [pid for pid in seats if players[pid]["penalty"] < 12]
     
     current_turn_idx = room.get("current_turn_idx", 0)
     turns = room.get("turns", [])  # список карт, выложенных на стол
@@ -308,6 +313,9 @@ async def move(
     # Убираем карты из руки игрока
     for c in cards:
         hand.remove(list(c))
+    
+    # Обновляем руку игрока в players сразу
+    players[str(req.tg_id)]["hand"] = hand
     
     # Добавляем ход в список
     turns.append({
@@ -376,11 +384,27 @@ async def move(
         room["turns"] = []
         room["current_turn_idx"] = 0
         winner = winner_id
+        
+        # Обновляем players в room перед проверкой завершения игры
+        room["players"] = players
+        room["deck"] = deck
 
         # print(deck)
         # print(all(len(p["hand"]) == 0 for p in players.values()))
 
-        if not deck and all(len(p["hand"]) == 0 for p in players.values()):
+        # Проверяем конец игры: колода пуста и у всех активных игроков руки пусты
+        # Активные игроки - те, у кого < 12 штрафных очков (независимо от turn_order)
+        active_players_list = [pid for pid in seats if players[pid]["penalty"] < 12]
+        active_players_hands_empty = all(
+            len(players[pid]["hand"]) == 0 
+            for pid in active_players_list
+        )
+        
+        logger.info(f"[MOVE] Проверка конца игры: deck пуста={not deck}, руки пусты={active_players_hands_empty}, активные игроки={active_players_list}")
+        for pid in active_players_list:
+            logger.info(f"[MOVE] Игрок {pid}: penalty={players[pid]['penalty']}, hand={players[pid]['hand']}")
+        
+        if not deck and active_players_hands_empty:
             MAX_PENALTY = 12
             num_players = len(players)
             scores_round = {pid: pdata["round_score"] for pid, pdata in players.items()}
@@ -495,6 +519,8 @@ async def move(
                     return {
                         "ok": True, 
                         "message": "Игра завершена", 
+                        "winner": game_winner,
+                        "losers": losers,
                         "balances": balances,
                         "results": game_results
                     }
@@ -516,9 +542,127 @@ async def move(
                     )
                     
                     # Продолжаем игру - переходим к пересдаче
+                    # Пересдаём партию (игра продолжается между оставшимися)
+                    from app.game.core.constants import DECK
+                    deck = list(DECK)
+                    random.shuffle(deck)
 
-            # Пересдаём партию если не было проигравших ИЛИ есть несколько оставшихся игроков
-            if not losers or (losers and len(remaining_players) > 1):
+                    # Определяем активных игроков (у кого < 12 штрафных)
+                    active_players = {pid: pdata for pid, pdata in players.items() if pdata["penalty"] < 12}
+                    
+                    # Раздаём карты только активным игрокам
+                    for pid, pdata in active_players.items():
+                        pdata["hand"] = deck[:4]
+                        deck = deck[4:]
+                        pdata["round_score"] = 0  # сброс очков партии, penalty сохраняем
+                        pdata["taken_tricks"] = 0  # сброс взяток
+                    
+                    # У выбывших игроков очищаем руки
+                    for pid, pdata in players.items():
+                        if pid not in active_players:
+                            pdata["hand"] = []
+
+                    trump = deck[0][1]
+                    seats = room.get("seats", list(players.keys()))
+                    # Обновляем attacker на первого активного игрока
+                    active_seats = [pid for pid in seats if pid in active_players]
+                    first_active = active_seats[0] if active_seats else seats[0]
+                    
+                    room.update({
+                        "deck": deck,
+                        "trump": trump,
+                        "field": {"attack": None, "defend": None, "winner": None},
+                        "attacker": first_active,
+                        "defender": active_seats[1] if len(active_seats) > 1 else None,
+                        "turn_order": active_seats.copy(),  # Только активные игроки
+                        "turns": [],
+                        "current_turn_idx": 0,
+                        "status": "playing"
+                    })
+
+                    await redis.setex(req.room_id, 3600, json.dumps(room))
+                    await send_msg(
+                        "reshuffle",
+                        {"room": room, "trump": trump, "deck_count": len(deck), "last_turn": room["last_turn"]},
+                        channel_name=f"room#{req.room_id}",
+                    )
+                    return {"ok": True, "message": "Колода пересдана, новая партия", "room": room}
+            
+            # Пересдаём партию если не было проигравших (игра продолжается)
+            else:
+                # Нет выбывших - определяем победителя по наименьшим штрафам
+                # Но если все активные игроки имеют руки пусты и колода пуста, игра должна завершиться
+                # В этом случае победитель - игрок с наименьшими штрафными очками
+                if active_players_hands_empty:
+                    # Все активные игроки без карт - определяем победителя
+                    game_winner = min(active_players_list, key=lambda pid: players[pid]["penalty"])
+                    logger.info(f"[GAME_OVER] Победитель {game_winner} (по наименьшим штрафам), проигравших нет")
+                    
+                    dao = TransactionDAO(session)
+                    
+                    # Формируем детальную информацию о результатах
+                    game_results = {}
+                    for pid, pdata in players.items():
+                        game_results[pid] = {
+                            "nickname": pdata["nickname"],
+                            "round_score": pdata["round_score"],
+                            "penalty": pdata["penalty"],
+                            "taken_tricks": pdata["taken_tricks"],
+                            "is_winner": pid == game_winner,
+                            "is_loser": False
+                        }
+                    
+                    # Победитель получает банк от всех проигравших
+                    all_player_ids = [int(pid) for pid in players.keys()]
+                    loser_ids = [pid for pid in all_player_ids if pid != int(game_winner)]
+                    
+                    if len(players) == 2:
+                        balances = await dao.apply_game_result(
+                            winner_id=int(game_winner),
+                            loser_id=loser_ids[0],
+                            stake=room["stake"],
+                        )
+                    else:
+                        balances = await dao.apply_game_result_multiplayer(
+                            winner_id=int(game_winner),
+                            loser_ids=loser_ids,
+                            stake=room["stake"],
+                        )
+                    
+                    await session.commit()
+
+                    await send_msg(
+                        event="game_over",
+                        payload={
+                            "room_id": req.room_id,
+                            "winner": game_winner,
+                            "losers": [],
+                            "stake": room["stake"],
+                            "balances": balances,
+                            "results": game_results,
+                            "last_turn": room["last_turn"],
+                        },
+                        channel_name=f"room#{req.room_id}",
+                    )
+
+                    await redis.unlink(req.room_id)
+
+                    await send_msg(
+                        event="close_room",
+                        payload={"room_id": req.room_id},
+                        channel_name="rooms"
+                    )
+
+                    return {
+                        "ok": True, 
+                        "message": "Игра завершена", 
+                        "winner": game_winner,
+                        "losers": [],
+                        "balances": balances,
+                        "results": game_results
+                    }
+                
+                # Если есть карты в колоде или у игроков - пересдаём партию
                 # пересдаём новую партию
                 from app.game.core.constants import DECK
                 deck = list(DECK)
@@ -1045,6 +1189,79 @@ async def create_one_out_room(redis: CustomRedis = Depends(get_redis)):
 
     return {"ok": True, "room": room}
 
+
+@router.post("/create_final_move_room")
+async def create_final_move_room(redis: CustomRedis = Depends(get_redis)):
+    """
+    Создаёт комнату для тестирования обработки конца игры.
+    3 игрока, ставка 1000.
+    У двух игроков руки пустые (все карты разыграны).
+    У одного игрока (111) осталась одна карта.
+    После хода этого игрока игра должна завершиться и начислить штрафные очки.
+    """
+    room_id = "1000_test_final_move"
+    trump = "♦"
+
+    room = {
+        "room_id": room_id,
+        "stake": 1000,
+        "created_at": datetime.utcnow().isoformat(),
+        "status": "playing",
+        "capacity": 3,
+        "speed": "normal",
+        "redeal": False,
+        "dark": False,
+        "reliable_only": False,
+        "players": {
+            "5254325840": {
+                "nickname": "edward",
+                "is_ready": True,
+                "hand": [],  # рука пуста - все карты разыграны
+                "round_score": 25,
+                "penalty": 6,
+                "taken_tricks": 2
+            },
+            "111": {
+                "nickname": "gg",
+                "is_ready": True,
+                "hand": [["A", "♠"]],  # осталась одна карта
+                "round_score": 30,
+                "penalty": 4,
+                "taken_tricks": 1
+            },
+            "222": {
+                "nickname": "hh",
+                "is_ready": True,
+                "hand": [],  # рука пуста - все карты разыграны
+                "round_score": 20,
+                "penalty": 2,
+                "taken_tricks": 3
+            }
+        },
+        "deck": [],  # колода пуста
+        "trump": trump,
+        "field": {"attack": None, "defend": None, "winner": None},
+        "last_turn": {
+            "attack": {"player": "222", "cards": [["K", "♦"]]},
+            "defend": {"player": "5254325840", "cards": [["A", "♦"]]},
+            "turns": [
+                {"player": "222", "cards": [["K", "♦"]]},
+                {"player": "5254325840", "cards": [["A", "♦"]]},
+                {"player": "111", "cards": [["Q", "♠"]]}
+            ]
+        },
+        "seats": ["5254325840", "111", "222"],
+        "attacker": "111",  # следующий ход - игрок 111
+        "defender": "5254325840",
+        "turn_order": ["111"],  # только игрок с картами
+        "turns": [],  # начинаем новый раунд
+        "current_turn_idx": 0  # следующий ход - первый игрок в turn_order (111)
+    }
+
+    await redis.setex(room_id, 3600, json.dumps(room))
+    logger.info(f"[TEST] Создана тестовая комната 'последний ход' {room_id}")
+
+    return {"ok": True, "room": room}
 
 
 @router.post("/clear_redis")
