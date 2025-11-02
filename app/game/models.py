@@ -12,6 +12,7 @@ from app.database import Base
 class GameResultEnum(str, Enum):
     WIN = "win"
     LOSS = "loss"
+    LOSS_BY_LEAVE = "loss_by_leave"  # Проигрыш из-за лива из игры
 
 
 class GameResult(Base):

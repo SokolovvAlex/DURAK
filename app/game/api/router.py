@@ -77,6 +77,16 @@ async def find_players(
         # проверка лимита вместимости
         if len(room.get("players", {})) >= room.get("capacity", 2):
             raise HTTPException(status_code=400, detail="Комната уже заполнена")
+        
+        # проверка надежности для reliable_only комнат
+        if room.get("reliable_only", False):
+            from app.game.api.reliability import check_player_reliability
+            is_reliable = await check_player_reliability(session, req.tg_id)
+            if not is_reliable:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Эта комната только для надежных игроков. У вас более 2 ливов за последние 10 игр"
+                )
 
         room["players"][str(req.tg_id)] = {
             "nickname": req.nickname,
@@ -109,6 +119,16 @@ async def find_players(
             opponent=opponent if room["status"] == "matched" else None,
         )
 
+    # проверка надежности для reliable_only комнат
+    if req.reliable_only:
+        from app.game.api.reliability import check_player_reliability
+        is_reliable = await check_player_reliability(session, req.tg_id)
+        if not is_reliable:
+            raise HTTPException(
+                status_code=400,
+                detail="Вы не можете создать комнату для надежных игроков. У вас более 2 ливов за последние 10 игр"
+            )
+    
     # создаём новую
     room_id = f"{req.stake}_{uuid.uuid4().hex[:8]}"
     room_data = {
@@ -181,16 +201,57 @@ async def ready(req: ReadyRequest, redis=Depends(get_redis)):
         # Создаём фиксированный порядок игроков (seats)
         seats = list(players.keys())
         
-        for tg_id, pdata in players.items():
-            hand = deck[:4]  # в Буркозле 4 карты на старте
-            deck = deck[4:]
-            pdata["hand"] = hand
-            pdata["round_score"] = 0
-            pdata["penalty"] = 0
-            pdata["taken_tricks"] = 0  # количество взяток в партии
-            logger.debug(f"[READY] {tg_id} ({pdata['nickname']}) получил {hand}")
+        # Проверяем режим redeal
+        redeal_enabled = room.get("redeal", False)
+        
+        # Раздаём карты с проверкой особых комбинаций (если включен redeal)
+        max_redraws = 100  # Лимит пересдач для избежания бесконечного цикла
+        redraw_count = 0
+        
+        while redraw_count < max_redraws:
+            deck = list(DECK)
+            random.shuffle(deck)
+            
+            trump = deck[0][1] if deck else "♦"
+            
+            # Раздаём карты всем игрокам
+            for tg_id, pdata in players.items():
+                hand = deck[:4]
+                deck = deck[4:]
+                pdata["hand"] = hand
+                pdata["round_score"] = 0
+                pdata["penalty"] = 0
+                pdata["taken_tricks"] = 0
+                logger.debug(f"[READY] {tg_id} ({pdata['nickname']}) получил {hand}")
+            
+            # Если включен redeal, проверяем особые комбинации
+            if redeal_enabled:
+                from app.game.core.special_combinations import has_special_combination
+                
+                # Проверяем, есть ли у кого-то особые комбинации
+                has_special = False
+                for tg_id, pdata in players.items():
+                    hand = pdata["hand"]
+                    if has_special_combination(hand, trump):
+                        logger.info(f"[READY] У игрока {tg_id} обнаружена особая комбинация, пересдача")
+                        has_special = True
+                        break
+                
+                # Если нет особых комбинаций - выходим из цикла
+                if not has_special:
+                    break
+                
+                # Иначе - пересдача
+                redraw_count += 1
+                logger.info(f"[READY] Пересдача #{redraw_count} из-за особых комбинаций")
+            else:
+                # Если redeal выключен - выходим из цикла
+                break
+        
+        if redraw_count >= max_redraws:
+            logger.warning(f"[READY] Достигнут лимит пересдач ({max_redraws}), продолжаем с текущими картами")
 
-        trump = deck[0][1]
+        trump = deck[0][1] if deck else "♦"
         room.update({
             "deck": deck,
             "trump": trump,
@@ -839,66 +900,166 @@ async def leave(
         # определяем оставшихся игроков
         remaining_ids = [pid for pid in players.keys() if pid != str(req.tg_id)]
         
+        # Помечаем ливера как проигравшего с LOSS_BY_LEAVE
         from app.payments.dao import TransactionDAO
         dao = TransactionDAO(session)
         
-        if len(players) == 2:
-            # Для двух игроков используем старый метод
-            balances = await dao.apply_game_result(
-                winner_id=int(remaining_ids[0]),
-                loser_id=int(req.tg_id),
-                stake=room["stake"],
-            )
-        else:
-            # Для трёх и более игроков используем новый метод
-            balances = await dao.apply_game_result_multiplayer(
-                winner_id=int(remaining_ids[0]),
-                loser_ids=[int(req.tg_id)],
-                stake=room["stake"],
-            )
+        # Записываем результат лива для ливера
+        await dao.apply_game_result_leave(
+            leaver_id=int(req.tg_id),
+            stake=room["stake"],
+        )
         await session.commit()
-
-        # уведомляем игроков
-        await send_msg(
-            event="game_over",
-            payload={
-                "room_id": req.room_id,
-                "winner": remaining_ids[0],
-                "losers": [str(req.tg_id)],
-                "stake": room["stake"],
+        
+        # Удаляем ливера из комнаты
+        del players[str(req.tg_id)]
+        
+        # Проверяем, сколько игроков осталось
+        if len(remaining_ids) == 1:
+            # Остался 1 игрок - игра завершена, он победитель
+            winner_id = remaining_ids[0]
+            
+            # Находим всех ливеров: проверяем seats (изначальный список игроков)
+            # seats содержит всех игроков, которые были в игре изначально
+            seats = room.get("seats", [])
+            # Если seats пуст или содержит только оставшихся - используем список из GameResult
+            # Либо просто используем всех, кто не является победителем и не в players
+            current_players = set(players.keys())
+            current_players.add(winner_id)  # победитель ещё в players
+            # Ливеры - все, кто был в seats, но не в current_players, плюс текущий ливер
+            all_leavers = [pid for pid in seats if pid not in current_players]
+            # Добавляем текущего ливера, если его ещё нет
+            if str(req.tg_id) not in all_leavers:
+                all_leavers.append(str(req.tg_id))
+            
+            # Если ливеров больше одного - используем multiplayer метод
+            if len(all_leavers) > 1:
+                balances = await dao.apply_game_result_multiplayer(
+                    winner_id=int(winner_id),
+                    loser_ids=[int(lid) for lid in all_leavers],
+                    stake=room["stake"],
+                )
+            else:
+                balances = await dao.apply_game_result(
+                    winner_id=int(winner_id),
+                    loser_id=int(req.tg_id),
+                    stake=room["stake"],
+                    is_leaver=True,
+                )
+            await session.commit()
+            
+            # Уведомляем игроков о завершении игры
+            await send_msg(
+                event="game_over",
+                payload={
+                    "room_id": req.room_id,
+                    "winner": winner_id,
+                    "losers": all_leavers,
+                    "stake": room["stake"],
+                    "balances": balances,
+                },
+                channel_name=f"room#{req.room_id}",
+            )
+            
+            await redis.unlink(req.room_id)
+            await send_msg(
+                "close_room",
+                {"room_id": req.room_id},
+                channel_name="rooms",
+            )
+            
+            return {
+                "ok": True,
+                "winner": winner_id,
+                "losers": all_leavers,
                 "balances": balances,
-            },
-            channel_name=f"room#{req.room_id}",
-        )
-
-        # сбрасываем комнату
-        for pid, pdata in players.items():
-            pdata["hand"] = []
-            pdata["round_score"] = 0
-            pdata["penalty"] = 0
-            pdata["is_ready"] = False
-
-        room["deck"] = []
-        room["field"] = {"attack": None, "defend": None, "winner": None}
-        room["attacker"] = None
-        room["status"] = "waiting"
-        room["players"] = players
-
-        await redis.set(req.room_id, json.dumps(room))
-
-        await send_msg(
-            "close_room",
-            {"room_id": req.room_id},
-            channel_name="rooms",
-        )
-
-        return {
-            "ok": True,
-            "winner": remaining_ids[0],
-            "loser": str(req.tg_id),
-            "balances": balances,
-            "message": "Игра завершена, игрок вышел",
-        }
+                "message": "Игра завершена, игрок вышел",
+            }
+        else:
+            # Осталось 2+ игроков - начинаем новую партию
+            logger.info(f"[LEAVE] Осталось {len(remaining_ids)} игроков, начинаем новую партию")
+            
+            # Пересдаём партию для оставшихся игроков
+            from app.game.core.constants import DECK
+            deck = list(DECK)
+            random.shuffle(deck)
+            
+            # Обновляем состав игроков
+            remaining_players = {pid: players[pid] for pid in remaining_ids}
+            
+            # Раздаём карты только оставшимся игрокам
+            for pid, pdata in remaining_players.items():
+                hand = deck[:4]
+                deck = deck[4:]
+                pdata["hand"] = hand
+                pdata["round_score"] = 0  # сброс очков партии
+                pdata["penalty"] = 0  # сброс штрафных очков
+                pdata["taken_tricks"] = 0  # сброс взяток
+                pdata["is_ready"] = True  # все готовы к новой партии
+            
+            trump = deck[0][1] if deck else "♦"
+            # Не перезаписываем seats - сохраняем изначальный список игроков
+            # Обновляем только turn_order для активных игроков
+            original_seats = room.get("seats", remaining_ids)
+            
+            room.update({
+                "players": remaining_players,
+                "deck": deck,
+                "trump": trump,
+                "field": {"attack": None, "defend": None, "winner": None},
+                "last_turn": {"attack": None, "defend": None, "turns": []},
+                "seats": original_seats,  # Сохраняем изначальный список игроков
+                "attacker": remaining_ids[0],
+                "defender": remaining_ids[1] if len(remaining_ids) > 1 else None,
+                "turn_order": remaining_ids.copy(),  # Только активные игроки
+                "turns": [],
+                "current_turn_idx": 0,
+                "status": "playing"
+            })
+            
+            await redis.setex(req.room_id, 3600, json.dumps(room))
+            
+            # Уведомляем оставшихся игроков о новой партии
+            for pid, pdata in remaining_players.items():
+                await send_msg(
+                    "hand",
+                    {
+                        "hand": pdata["hand"],
+                        "trump": trump,
+                        "deck_count": len(deck),
+                        "attacker": room["attacker"],
+                    },
+                    channel_name=f"user#{pid}",
+                )
+            
+            await send_msg(
+                event="player_left",
+                payload={
+                    "room_id": req.room_id,
+                    "leaver": str(req.tg_id),
+                    "remaining": remaining_ids,
+                    "message": f"Игрок {req.tg_id} вышел, начинается новая партия",
+                },
+                channel_name=f"room#{req.room_id}",
+            )
+            
+            await send_msg(
+                "game_start",
+                {
+                    "room_id": req.room_id,
+                    "trump": trump,
+                    "deck_count": len(deck),
+                    "attacker": room["attacker"],
+                    "last_turn": room["last_turn"],
+                },
+                channel_name=f"room#{req.room_id}",
+            )
+            
+            return {
+                "ok": True,
+                "message": "Игрок вышел, начинается новая партия между оставшимися",
+                "remaining": remaining_ids,
+            }
 
 
 @router.get("/rooms")

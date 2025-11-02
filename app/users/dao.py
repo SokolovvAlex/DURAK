@@ -10,6 +10,7 @@ from app.users.models import User
 from sqlalchemy import select, update as sa_update, delete as sa_delete
 
 from app.users.schemas import UserStatsOut
+from app.game.api.reliability import get_player_reliability_stats
 
 
 class UserDAO:
@@ -119,6 +120,9 @@ class UserDAO:
 
         user, total_games, wins, losses, total_earned, total_lost, net_profit = user_data
 
+        # Получаем статистику надежности
+        reliability_stats = await get_player_reliability_stats(session, user.tg_id)
+
         return UserStatsOut(
             id=user.id,
             tg_id=user.tg_id,
@@ -133,5 +137,8 @@ class UserDAO:
             losses=losses,
             total_earned=total_earned,
             total_lost=total_lost,
-            net_profit=net_profit
+            net_profit=net_profit,
+            is_reliable=reliability_stats["is_reliable"],
+            reliability=reliability_stats["reliability"],
+            leaves_in_last_10=reliability_stats["leaves"]
         )

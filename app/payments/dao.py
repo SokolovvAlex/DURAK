@@ -260,12 +260,14 @@ class TransactionDAO:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def apply_game_result(self, winner_id: int, loser_id: int, stake: int):
+    async def apply_game_result(self, winner_id: int, loser_id: int, stake: int, is_leaver: bool = False):
         """
         Начисляет выигрыш победителю и списывает у проигравшего.
         Создаёт:
           • PaymentTransaction (для истории пополнений/списаний)
           • GameResult (для истории игр)
+        Args:
+            is_leaver: Если True, то проигравший ливнул из игры (используется LOSS_BY_LEAVE)
         """
         # --- Получаем пользователей ---
         winner = await self.session.scalar(select(User).where(User.tg_id == winner_id))
@@ -304,7 +306,7 @@ class TransactionDAO:
         )
         lose_result = GameResult(
             user_id=loser.id,
-            result=GameResultEnum.LOSS,
+            result=GameResultEnum.LOSS_BY_LEAVE if is_leaver else GameResultEnum.LOSS,
             rate=stake,
         )
 
@@ -392,6 +394,31 @@ class TransactionDAO:
         return {
             "winner_balance": float(winner.balance),
             "losers_balance": {lid: loser_id for lid in loser_ids},
+        }
+    
+    async def apply_game_result_leave(self, leaver_id: int, stake: int):
+        """
+        Записывает результат лива игрока из игры.
+        Создаёт запись GameResult с LOSS_BY_LEAVE для статистики.
+        Деньги не списываются (списываются в apply_game_result при завершении игры).
+        """
+        # Получаем пользователя
+        leaver = await self.session.scalar(select(User).where(User.tg_id == leaver_id))
+        if not leaver:
+            raise ValueError(f"Игрок {leaver_id} не найден")
+        
+        # Создаём запись в GameResult для статистики
+        leave_result = GameResult(
+            user_id=leaver.id,
+            result=GameResultEnum.LOSS_BY_LEAVE,
+            rate=stake,
+        )
+        
+        self.session.add(leave_result)
+        await self.session.flush()
+        
+        return {
+            "leaver_result": leave_result.id,
         }
 
     @classmethod

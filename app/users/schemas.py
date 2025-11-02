@@ -56,6 +56,11 @@ class UserStatsOut(BaseModel):
     total_earned: float
     total_lost: float
     net_profit: float
+    
+    # Статистика надежности
+    is_reliable: bool
+    reliability: float  # Процент надежности (0.0 - 1.0)
+    leaves_in_last_10: int  # Количество ливов за последние 10 игр
 
     class Config:
         from_attributes = True
