@@ -9,7 +9,9 @@ async def handle_referral(session, new_user_tg_id: int, referral_param: str):
     if referral_param.startswith("ref"):
         referrer_id = int(referral_param.replace("ref", ""))
         referrer = await UserDAO.find_one_or_none(session, tg_id=referrer_id)
-        if referrer and referrer.tg_id != new_user_tg_id:
-            await FriendDAO.add_friend(session, user_id=referrer.tg_id, friend_id=new_user_tg_id)
+        new_user = await UserDAO.find_one_or_none(session, tg_id=new_user_tg_id)
+        if referrer and new_user and referrer.tg_id != new_user_tg_id:
+            # FriendDAO.add_friend ожидает user.id, а не tg_id
+            await FriendDAO.add_friend(session, user_id=referrer.id, friend_id=new_user.id)
             return True
     return False

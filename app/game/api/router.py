@@ -1119,6 +1119,16 @@ async def join_room(
     if user.balance < room["stake"]:
         raise HTTPException(status_code=400, detail="Недостаточно средств для игры")
 
+    # проверка надежности для reliable_only комнат
+    if room.get("reliable_only", False):
+        from app.game.api.reliability import check_player_reliability
+        is_reliable = await check_player_reliability(session, tg_id)
+        if not is_reliable:
+            raise HTTPException(
+                status_code=400,
+                detail="Эта комната только для надежных игроков. У вас более 2 ливов за последние 10 игр"
+            )
+
     # Добавляем игрока
     players[str(tg_id)] = {
         "nickname": nickname,
