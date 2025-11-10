@@ -1,7 +1,7 @@
 from datetime import datetime
 import logging
 
-from fastapi import Request, HTTPException, status, Depends
+from fastapi import Request, HTTPException, status, Depends, Query
 from jose import jwt, JWTError
 
 from app.config import settings
@@ -72,6 +72,65 @@ async def get_current_unbanned_user(current_user: User = Depends(get_current_use
     
     # Проверяем, не забанен ли обычный пользователь
     if not current_user.is_active:
-        raise NoPermissionsException("Пользователь забанен")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Пользователь забанен"
+        )
+    
+    return current_user
+
+
+# ============= Новые зависимости для работы с tg_id (для Mini App) =============
+
+async def get_current_user_by_tg_id(
+    session: SessionDep,
+    tg_id: int = Query(..., description="Telegram user id"),
+
+) -> User:
+    """Получение текущего пользователя по tg_id (для Mini App)"""
+    logger.info(f"Fetching user with tg_id: {tg_id}")
+    user = await UserDAO.find_one_or_none(session, tg_id=tg_id)
+    if not user:
+        logger.error(f"User with tg_id {tg_id} not found")
+        raise UserIsNotPresentException
+    return user
+
+
+async def get_current_admin_user_by_tg_id(
+    current_user: User = Depends(get_current_user_by_tg_id)
+) -> User:
+    """Проверяем, что пользователь является администратором (по tg_id)"""
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="У вас нет прав администратора"
+        )
+    
+    # Проверяем, что пользователь активен
+    if not current_user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Ваш аккаунт деактивирован"
+        )
+    
+    return current_user
+
+
+async def get_current_super_admin_by_tg_id(
+    current_user: User = Depends(get_current_user_by_tg_id)
+) -> User:
+    """Проверяем, что пользователь является суперадмином (по tg_id)"""
+    if not current_user.is_super_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="У вас нет прав суперадмина"
+        )
+    
+    # Проверяем, что пользователь активен
+    if not current_user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Ваш аккаунт деактивирован"
+        )
     
     return current_user

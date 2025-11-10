@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Response, Query, Body
+from fastapi import APIRouter, HTTPException, Depends, Query, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import status
 from typing import Optional
@@ -6,12 +6,13 @@ from typing import Optional
 from app.database import SessionDep
 from app.admin.dao import AdminDAO
 from app.admin.schemas import (
-    AdminCreate, AdminOut, LoginRequest, LoginResponse,
+    AdminCreate, AdminOut,
     UserAdminOut, UserAdminUpdate, TransactionAdminOut, PlatformStatistics
 )
-from app.admin.auth import get_password_hash, authenticate_user, create_access_token
-from app.admin.dependencies import get_current_admin_user, get_current_super_admin
-from app.exception import IncorrectEmailOrPasswordException
+from app.admin.dependencies import (
+    get_current_admin_user_by_tg_id, 
+    get_current_super_admin_by_tg_id
+)
 from app.users.dao import UserDAO
 from app.users.models import User
 from app.admin.dao import AdminDAO
@@ -27,7 +28,7 @@ router = APIRouter(prefix="/admin", tags=["Admin"])
 async def create_admin(
     admin_data: AdminCreate,
     session: SessionDep,
-    admin: User = Depends(get_current_super_admin),
+    admin: User = Depends(get_current_super_admin_by_tg_id),
 ):
     """
     Создание нового администратора (только для суперадминов)
@@ -48,78 +49,13 @@ async def create_admin(
         raise HTTPException(status_code=500, detail=f"Ошибка создания администратора: {str(e)}")
 
 
-@router.post("/login", response_model=LoginResponse, status_code=200)
-async def login(
-    credentials: LoginRequest,
-    session: SessionDep,
-    response: Response
-):
-    """
-    Вход в систему администратора
-    """
-    # Аутентификация пользователя
-    user = await authenticate_user(session, credentials.login, credentials.password)
-    
-    if not user:
-        raise IncorrectEmailOrPasswordException
-    
-    # Проверяем, что пользователь является администратором
-    if not user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="У вас нет прав администратора"
-        )
-    
-    # Проверяем, что пользователь активен
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Ваш аккаунт деактивирован"
-        )
-    
-    # Создаем JWT токен
-    access_token = create_access_token(data={"sub": str(user.id)})
-    
-    # Устанавливаем куку с токеном
-    response.set_cookie(
-        key="durak_access_token",
-        value=access_token,
-        httponly=True,
-        secure=True,  # Для продакшена должно быть True
-        samesite="lax",
-        max_age=28800  # 8 часов (8 * 60 * 60)
-    )
-    
-    return LoginResponse(
-        access_token=access_token,
-        token_type="bearer",
-        user=AdminOut.model_validate(user)
-    )
-
-
-@router.post("/logout", status_code=200)
-async def logout(response: Response):
-    """
-    Выход из системы администратора
-    """
-    # Удаляем куку с токеном
-    response.delete_cookie(
-        key="durak_access_token",
-        httponly=True,
-        secure=True,
-        samesite="lax"
-    )
-    
-    return {"message": "Успешный выход из системы"}
-
-
 # ============= Эндпоинты для управления пользователями =============
 
 
 @router.get("/users", response_model=list[UserAdminOut], status_code=200)
 async def get_all_users(
     session: SessionDep,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(get_current_admin_user_by_tg_id),
     skip: int = Query(0, ge=0, description="Количество записей для пропуска"),
     limit: int = Query(100, ge=1, le=1000, description="Лимит записей"),
     is_admin: Optional[bool] = Query(None, description="Фильтр по администраторам"),
@@ -149,7 +85,7 @@ async def get_all_users(
 async def get_user_by_id(
     user_id: int,
     session: SessionDep,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(get_current_admin_user_by_tg_id),
 ):
     """
     Получить детальную информацию о пользователе
@@ -165,7 +101,7 @@ async def get_user_by_id(
 async def ban_user(
     user_id: int,
     session: SessionDep,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(get_current_admin_user_by_tg_id),
 ):
     """
     Забанить пользователя (установить is_active = False)
@@ -191,7 +127,7 @@ async def ban_user(
 async def unban_user(
     user_id: int,
     session: SessionDep,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(get_current_admin_user_by_tg_id),
 ):
     """
     Разбанить пользователя (установить is_active = True)
@@ -211,7 +147,7 @@ async def update_user(
     user_id: int,
     user_update: UserAdminUpdate,
     session: SessionDep,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(get_current_admin_user_by_tg_id),
 ):
     """
     Изменить данные пользователя
@@ -249,7 +185,7 @@ async def update_user(
 @router.get("/admins", response_model=list[AdminOut], status_code=200)
 async def get_all_admins_list(
     session: SessionDep,
-    admin: User = Depends(get_current_super_admin),
+    admin: User = Depends(get_current_super_admin_by_tg_id),
 ):
     """
     Получить список всех администраторов (только для суперадминов)
@@ -262,7 +198,7 @@ async def get_all_admins_list(
 async def delete_admin(
     admin_id: int,
     session: SessionDep,
-    admin: User = Depends(get_current_super_admin),
+    admin: User = Depends(get_current_super_admin_by_tg_id),
 ):
     """
     Удалить администратора (только для суперадминов)
@@ -291,9 +227,9 @@ async def delete_admin(
 @router.patch("/admins/{admin_id}/permissions", response_model=AdminOut, status_code=200)
 async def change_admin_permissions(
     admin_id: int,
+    session: SessionDep,
     is_super_admin: bool = Body(...),
-    session: SessionDep = None,
-    admin: User = Depends(get_current_super_admin),
+    admin: User = Depends(get_current_super_admin_by_tg_id),
 ):
     """
     Изменить права администратора (сделать суперадмином или убрать статус)
@@ -329,7 +265,7 @@ async def change_admin_permissions(
 @router.get("/transactions", response_model=list[TransactionAdminOut], status_code=200)
 async def get_all_transactions(
     session: SessionDep,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(get_current_admin_user_by_tg_id),
     skip: int = Query(0, ge=0, description="Количество записей для пропуска"),
     limit: int = Query(100, ge=1, le=1000, description="Лимит записей"),
     type: Optional[str] = Query(None, description="Фильтр по типу транзакции"),
@@ -362,7 +298,7 @@ async def get_all_transactions(
 async def get_transaction_by_id(
     transaction_id: int,
     session: SessionDep,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(get_current_admin_user_by_tg_id),
 ):
     """
     Получить детальную информацию о транзакции
@@ -378,7 +314,7 @@ async def get_transaction_by_id(
 @router.get("/statistics", response_model=PlatformStatistics, status_code=200)
 async def get_platform_statistics(
     session: SessionDep,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(get_current_admin_user_by_tg_id),
 ):
     """
     Получить общую статистику платформы
